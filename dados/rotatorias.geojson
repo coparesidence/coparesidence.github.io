@@ -1,0 +1,75 @@
+{
+ "type": "FeatureCollection",
+ "features": [
+  {
+   "type": "Feature",
+   "properties": {
+    "raio_m": 5.4,
+    "nome": "Rotatória 1",
+    "frente": [
+     596
+    ]
+   },
+   "geometry": {
+    "type": "Point",
+    "coordinates": [
+     -37.38986,
+     -5.17782
+    ]
+   }
+  },
+  {
+   "type": "Feature",
+   "properties": {
+    "raio_m": 3.4,
+    "nome": "Rotatória 2",
+    "frente": [
+     447,
+     448
+    ]
+   },
+   "geometry": {
+    "type": "Point",
+    "coordinates": [
+     -37.390134,
+     -5.1763
+    ]
+   }
+  },
+  {
+   "type": "Feature",
+   "properties": {
+    "raio_m": 3.7,
+    "nome": "Rotatória 3",
+    "frente": [
+     489,
+     490
+    ]
+   },
+   "geometry": {
+    "type": "Point",
+    "coordinates": [
+     -37.393026,
+     -5.173607
+    ]
+   }
+  },
+  {
+   "type": "Feature",
+   "properties": {
+    "raio_m": 5.0,
+    "nome": "Rotatória 4",
+    "frente": [
+     567
+    ]
+   },
+   "geometry": {
+    "type": "Point",
+    "coordinates": [
+     -37.392288,
+     -5.177109
+    ]
+   }
+  }
+ ]
+}

@@ -1,0 +1,19 @@
+# Publica SÓ o app. Fica só na máquina: cad/ (DWG/CAD, 1,9 GB), backups,
+# arquivos intermediários de dados/ e configurações locais.
+/*
+!/.gitignore
+!/README.md
+!/index.html
+!/manifest.webmanifest
+!/sw.js
+!/icons/
+!/dados/
+
+/dados/*
+!/dados/ruas.geojson
+!/dados/lotes.geojson
+!/dados/portaria.geojson
+!/dados/pois.geojson
+!/dados/rotatorias.geojson
+
+.DS_Store

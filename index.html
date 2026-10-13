@@ -1,0 +1,1097 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
+<title>Copacabana Residence</title>
+<meta name="description" content="Rota da portaria até o seu lote no Copacabana Residence">
+<meta name="theme-color" content="#0f766e">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="Copacabana">
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="icon" href="icons/icon-192.png">
+<link rel="apple-touch-icon" href="icons/icon-180.png">
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
+<style>
+  /* visual inspirado no "CityRoute AR": painel branco arredondado embaixo,
+     pílula de manobra no topo, rota verde-azulada, bolinha azul com cone */
+  :root{
+    --ink:#0f172a; --muted:#64748b; --line:#e2e8f0; --soft:#f1f5f9; --sheet:#ffffff;
+    --blue:#2563eb; --teal:#0d9488; --teal2:#14b8a6; --route:#0fb5a6; --danger:#e11d48;
+    --sab:env(safe-area-inset-bottom,0px); --sat:env(safe-area-inset-top,0px);
+  }
+  *{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+  html,body{margin:0;height:100%;overflow:hidden;font-family:-apple-system,BlinkMacSystemFont,"SF Pro Text","Segoe UI",Roboto,Helvetica,Arial,sans-serif;background:#0b1016;color:var(--ink)}
+  #map{position:absolute;inset:0}
+  .leaflet-container{background:#0b1016;font-family:inherit}
+  .leaflet-control-attribution{font-size:9px;background:rgba(255,255,255,.6)!important;border-radius:6px 0 0 6px}
+  [hidden]{display:none!important}
+
+  /* topo */
+  .brandpill,.maneuver,.fab,.toast{position:absolute;z-index:1000;box-shadow:0 8px 28px rgba(15,23,42,.22)}
+  .brandpill{top:calc(12px + var(--sat));left:12px;display:flex;align-items:center;gap:8px;
+    background:rgba(255,255,255,.92);backdrop-filter:blur(10px);-webkit-backdrop-filter:blur(10px);
+    border-radius:999px;padding:8px 14px 8px 8px;font-size:13px;font-weight:700;letter-spacing:.2px}
+  .brandpill .logo{width:26px;height:26px;border-radius:50%;background:linear-gradient(135deg,var(--teal2),var(--blue));display:grid;place-items:center}
+  .maneuver{top:calc(12px + var(--sat));left:50%;transform:translateX(-50%);display:flex;align-items:center;gap:12px;
+    background:linear-gradient(135deg,#0f766e,#1d4ed8);color:#fff;border-radius:22px;padding:10px 18px 10px 10px;
+    min-width:210px;max-width:calc(100% - 24px);animation:drop .35s cubic-bezier(.2,.9,.3,1.3)}
+  .maneuver .mi{width:44px;height:44px;border-radius:14px;background:rgba(255,255,255,.18);display:grid;place-items:center;flex:none}
+  .maneuver b{display:block;font-size:22px;line-height:1.05}
+  .maneuver span{font-size:13px;opacity:.92}
+  @keyframes drop{from{opacity:0;transform:translate(-50%,-14px) scale(.96)}to{opacity:1;transform:translate(-50%,0)}}
+  .fab{right:14px;width:48px;height:48px;border-radius:50%;border:0;background:#fff;display:grid;place-items:center;cursor:pointer}
+  .toast{left:50%;transform:translateX(-50%);top:calc(84px + var(--sat));background:var(--ink);color:#fff;font-size:13px;font-weight:600;
+    padding:8px 14px;border-radius:999px;opacity:0;transition:opacity .25s;pointer-events:none}
+  .toast.show{opacity:1}
+
+  /* painel inferior */
+  .sheet{position:absolute;left:0;right:0;bottom:0;z-index:1000;margin:0 auto;max-width:520px;
+    background:var(--sheet);border-radius:26px 26px 0 0;padding:8px 18px calc(18px + var(--sab));
+    box-shadow:0 -10px 40px rgba(15,23,42,.28)}
+  @media (min-width:560px){ .sheet{bottom:14px;border-radius:26px} }
+  .grab{width:38px;height:5px;border-radius:9px;background:#cbd5e1;margin:2px auto 12px}
+  .sheet section{animation:fadeup .3s ease}
+  @keyframes fadeup{from{opacity:0;transform:translateY(8px)}to{opacity:1;transform:none}}
+  .sheet h1{font-size:19px;margin:0 0 12px;letter-spacing:-.2px}
+
+  .search{display:flex;align-items:center;gap:8px;background:var(--soft);border:2px solid transparent;border-radius:18px;padding:6px 6px 6px 14px;transition:border-color .2s}
+  .search:focus-within{border-color:var(--teal2);background:#fff}
+  .search input{flex:1;min-width:0;border:0;background:transparent;font-size:19px;font-weight:600;color:var(--ink);outline:none;padding:8px 0}
+  .search input::placeholder{color:#94a3b8;font-weight:500}
+  .search input::-webkit-outer-spin-button,.search input::-webkit-inner-spin-button{-webkit-appearance:none;margin:0}
+  .search input[type=number]{-moz-appearance:textfield}
+  .go{width:50px;height:50px;border-radius:15px;border:0;cursor:pointer;flex:none;display:grid;place-items:center;
+    background:linear-gradient(135deg,var(--teal2),var(--blue));box-shadow:0 6px 16px rgba(37,99,235,.35)}
+  .err{color:var(--danger);font-size:13px;font-weight:600;margin:8px 4px 0;min-height:0}
+  .err:empty{display:none}
+
+  .places{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin-top:12px}
+  .place{border:0;cursor:pointer;background:var(--soft);border-radius:16px;padding:12px 6px 10px;display:flex;flex-direction:column;align-items:center;gap:6px;
+    font-size:13px;font-weight:600;color:var(--ink);font-family:inherit}
+  .place .pi{width:38px;height:38px;border-radius:12px;display:grid;place-items:center;background:#fff;box-shadow:0 2px 8px rgba(15,23,42,.08)}
+
+  /* botões com "mola" (inspirado no Elastic Button do naocodei) */
+  .press{transition:transform .35s cubic-bezier(.3,1.6,.5,1)}
+  .press:active{transform:scale(.93);transition-duration:.08s}
+
+  .dest{display:flex;align-items:center;gap:12px}
+  .flag{width:46px;height:46px;border-radius:15px;background:linear-gradient(135deg,var(--teal2),var(--teal));display:grid;place-items:center;flex:none}
+  .dtxt{flex:1;min-width:0}
+  .dtxt small{display:block;color:var(--muted);font-size:12px;font-weight:600;text-transform:uppercase;letter-spacing:.6px}
+  .dtxt b{font-size:19px}
+  .x{width:40px;height:40px;border-radius:50%;border:0;background:var(--soft);cursor:pointer;display:grid;place-items:center;flex:none}
+  .stats{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin-top:14px}
+  .stats div{background:var(--soft);border-radius:14px;padding:10px 8px;text-align:center}
+  .stats b{display:block;font-size:18px}
+  .stats small{color:var(--muted);font-size:11px;font-weight:600}
+  .prog{height:6px;border-radius:9px;background:var(--soft);margin-top:12px;overflow:hidden}
+  .prog i{display:block;height:100%;width:0;border-radius:9px;background:linear-gradient(90deg,var(--teal2),var(--blue));transition:width .6s ease}
+  .nhint{font-size:12px;color:var(--muted);margin-top:10px;text-align:center}
+
+  .arr{text-align:center;padding:4px 0 2px}
+  .arr .ok{width:64px;height:64px;border-radius:50%;margin:2px auto 10px;background:linear-gradient(135deg,var(--teal2),var(--teal));display:grid;place-items:center;
+    box-shadow:0 10px 26px rgba(13,148,136,.4);animation:pop .5s cubic-bezier(.2,1.6,.4,1)}
+  @keyframes pop{from{transform:scale(.3);opacity:0}to{transform:none;opacity:1}}
+  .arr p{color:var(--muted);margin:0 0 14px;font-size:15px}
+  .primary{width:100%;height:52px;border:0;border-radius:16px;cursor:pointer;color:#fff;font-size:16px;font-weight:700;font-family:inherit;
+    background:linear-gradient(135deg,var(--teal2),var(--blue));box-shadow:0 8px 20px rgba(37,99,235,.3)}
+
+  /* marcadores */
+  .me{position:relative;width:24px;height:24px}
+  .me .dot{position:absolute;inset:4px;border-radius:50%;background:var(--blue);border:3px solid #fff;box-shadow:0 2px 8px rgba(0,0,0,.35)}
+  .me .halo{position:absolute;inset:-14px;border-radius:50%;background:rgba(37,99,235,.25);animation:pulse 2s ease-out infinite}
+  .me .cone{position:absolute;left:50%;top:50%;width:110px;height:110px;margin:-55px 0 0 -55px;border-radius:50%;
+    background:conic-gradient(from -30deg, rgba(37,99,235,.85), rgba(37,99,235,.35) 30deg, rgba(37,99,235,0) 60deg, rgba(37,99,235,0) 300deg, rgba(37,99,235,.35) 330deg, rgba(37,99,235,.85));
+    -webkit-mask:radial-gradient(circle, #000 0 22%, rgba(0,0,0,.6) 48%, transparent 72%);mask:radial-gradient(circle, #000 0 22%, rgba(0,0,0,.6) 48%, transparent 72%);transition:transform .4s}
+  @keyframes pulse{0%{transform:scale(.4);opacity:.9}100%{transform:scale(1.3);opacity:0}}
+  .pin{width:34px;height:34px;border-radius:50%;background:linear-gradient(135deg,var(--teal2),var(--teal));border:3px solid #fff;display:grid;place-items:center;box-shadow:0 4px 14px rgba(0,0,0,.35)}
+  .poi{width:28px;height:28px;border-radius:50%;background:#fff;display:grid;place-items:center;box-shadow:0 2px 10px rgba(0,0,0,.35)}
+  .gate{width:16px;height:16px;border-radius:50%;background:#22c55e;border:3px solid #fff;box-shadow:0 2px 8px rgba(0,0,0,.4)}
+  #confetti{position:fixed;inset:0;pointer-events:none;z-index:2000}
+</style>
+</head>
+<body>
+<div id="map"></div>
+
+<div class="brandpill" id="brand">
+  <span class="logo"><svg width="14" height="14" viewBox="0 0 24 24" fill="#fff"><path d="M12 2a7 7 0 0 0-7 7c0 5.2 7 13 7 13s7-7.8 7-13a7 7 0 0 0-7-7zm0 9.5A2.5 2.5 0 1 1 12 6.5a2.5 2.5 0 0 1 0 5z"/></svg></span>
+  Copacabana Residence
+</div>
+
+<!-- próxima manobra (só durante a navegação) -->
+<div class="maneuver" id="man" hidden>
+  <div class="mi" id="manIcon"></div>
+  <div><b id="manDist">—</b><span id="manTxt">—</span></div>
+</div>
+<div class="toast" id="toast"></div>
+<button class="fab press" id="recenter" hidden aria-label="Centralizar em mim">
+  <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#2563eb" stroke-width="2.4" stroke-linecap="round"><circle cx="12" cy="12" r="4"/><path d="M12 2v3M12 19v3M2 12h3M19 12h3"/></svg>
+</button>
+
+<div class="sheet" id="sheet">
+  <div class="grab"></div>
+
+  <!-- 1) escolher o destino -->
+  <section id="stChoose">
+    <h1>Para onde você vai?</h1>
+    <form class="search" id="fLote" autocomplete="off">
+      <svg width="20" height="20" viewBox="0 0 24 24" fill="#0d9488"><path d="M12 2a7 7 0 0 0-7 7c0 5.2 7 13 7 13s7-7.8 7-13a7 7 0 0 0-7-7zm0 9.5A2.5 2.5 0 1 1 12 6.5a2.5 2.5 0 0 1 0 5z"/></svg>
+      <input id="lote" type="number" min="1" inputmode="numeric" enterkeyhint="go" placeholder="Número do lote">
+      <button class="go press" id="go" type="submit" aria-label="Traçar rota">
+        <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14M13 6l6 6-6 6"/></svg>
+      </button>
+    </form>
+    <div class="err" id="err"></div>
+    <div class="places" id="places"></div>
+  </section>
+
+  <!-- 2) navegando -->
+  <section id="stNav" hidden>
+    <div class="dest">
+      <div class="flag"><svg width="22" height="22" viewBox="0 0 24 24" fill="#fff"><path d="M5 21V4h11l-1.5 3.5L16 11H7v10z"/></svg></div>
+      <div class="dtxt"><small id="dLabel">Indo para</small><b id="dName">—</b></div>
+      <button class="x press" id="som" aria-label="Voz ligada" aria-pressed="true"></button>
+      <button class="x press" id="cancel" aria-label="Encerrar rota">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#0f172a" stroke-width="2.8" stroke-linecap="round"><path d="M6 6l12 12M18 6L6 18"/></svg>
+      </button>
+    </div>
+    <div class="stats">
+      <div><b id="rDist">—</b><small>faltam</small></div>
+      <div><b id="rTempo">—</b><small>de moto</small></div>
+      <div><b id="rEta">—</b><small>chegada</small></div>
+    </div>
+    <div class="prog"><i id="progBar"></i></div>
+    <div class="nhint" id="navHint"></div>
+  </section>
+
+  <!-- 3) chegou -->
+  <section id="stArr" class="arr" hidden>
+    <div class="ok"><svg width="30" height="30" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><path d="M5 13l4 4L19 7"/></svg></div>
+    <h1>Você chegou!</h1>
+    <p id="arrTxt">—</p>
+    <button class="primary press" id="again">Nova rota</button>
+  </section>
+</div>
+<canvas id="confetti" hidden></canvas>
+
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<script>
+/* ==================================================================
+   Copacabana Residence — navegação interna até o lote
+   Dois modos, mesmo motor de roteamento:
+     • MODO REAL  → lê dados/ruas.geojson, dados/lotes.geojson,
+                    dados/portaria.geojson (saídos do DWG georreferenciado)
+     • MODO EXEMPLO → gera uma malha de quadras/ruas/lotes (protótipo)
+   O motor constrói um grafo a partir das LINHAS DE RUA e "gruda"
+   portaria e lotes na rua mais próxima; rota = Dijkstra (offline).
+================================================================== */
+
+const CONFIG = {
+  dados: {
+    ruas:     'dados/ruas.geojson',
+    lotes:    'dados/lotes.geojson',
+    portaria: 'dados/portaria.geojson',
+  },
+  velocidadeMotoKmh: 18,
+};
+
+/* ---------------- geometria (lat/lng ↔ metros) ---------------- */
+const R = 6378137;
+const rad = Math.PI/180;
+function metros(a, b){                     // distância aprox. entre [lat,lng]
+  const dLat=(b[0]-a[0])*rad, dLng=(b[1]-a[1])*rad, lat=(a[0]+b[0])/2*rad;
+  return Math.hypot(dLng*Math.cos(lat), dLat) * R;
+}
+function projetarNoSegmento(P, A, B){       // projeção de P no segmento AB
+  const xy = (pt)=>[ (pt[1]-A[1])*Math.cos(A[0]*rad)*R*rad, (pt[0]-A[0])*R*rad ];
+  const p=xy(P), b=xy(B);
+  const len2 = b[0]*b[0]+b[1]*b[1] || 1;
+  let t = (p[0]*b[0]+p[1]*b[1])/len2;
+  t = Math.max(0, Math.min(1, t));
+  const q=[b[0]*t, b[1]*t];
+  const lat = A[0] + q[1]/(R*rad);
+  const lng = A[1] + q[0]/(Math.cos(A[0]*rad)*R*rad);
+  return { latlng:[lat,lng], dist: Math.hypot(p[0]-q[0], p[1]-q[1]) };
+}
+
+/* ---------------- grafo de ruas (direcionado p/ mão única) ----------------
+   lines = [{path:[[lat,lng],...], ow:0|1|-1}]  ow: 0=mão dupla, 1=sentido do
+   caminhamento da linha, -1=sentido inverso. */
+function buildGraph(lines){
+  const nodes=new Map(), adj=new Map(), edges=[];
+  const key=(ll)=> ll[0].toFixed(6)+','+ll[1].toFixed(6);
+  const nid=(ll)=>{ const k=key(ll); if(!nodes.has(k)){nodes.set(k,ll);adj.set(k,[]);} return k; };
+  for(const line of lines){
+    const path=line.path||line, ow=line.ow||0, st=line.st??null;
+    for(let i=0;i+1<path.length;i++){
+      const a=nid(path[i]), b=nid(path[i+1]);
+      if(a===b) continue;
+      const w=metros(nodes.get(a),nodes.get(b));
+      if(ow>=0) adj.get(a).push({to:b,w,st});   // permite a->b (dupla ou fwd)
+      if(ow<=0) adj.get(b).push({to:a,w,st});   // permite b->a (dupla ou rev)
+      edges.push([a,b,ow,st]);
+    }
+  }
+  return {nodes,adj,edges};
+}
+// ---- ROTATÓRIAS: injeta anel de circulação ANTI-HORÁRIA (tráfego BR, mão direita) ----
+// Cada rua que chega na rotatória é reconectada ao anel; remove o cruzamento reto
+// pelo centro, forçando a rota a contornar (retornos/conversões passam pela rotatória).
+function injectRotatorias(g, rots){
+  const skip=(k)=> typeof k==='string' && (k[0]==='L'||k==='PORTARIA'||k.startsWith('p_')||k.startsWith('POI')||k.startsWith('RT'));
+  // grau não-direcionado de cada nó (cruzamento = grau ≥ 3)
+  const deg=new Map();
+  for(const e of g.edges){ if(!e) continue; deg.set(e[0],(deg.get(e[0])||0)+1); deg.set(e[1],(deg.get(e[1])||0)+1); }
+  for(const R of rots){
+    const M=[R.lat,R.lng], r=Math.max(R.raio||4, 3), cos0=Math.cos(M[0]*rad);
+    // 1) acha o CRUZAMENTO (grau≥3) mais próximo do marcador, até 35m → centro do anel
+    let J=null, bd=Infinity;
+    for(const [k,ll] of g.nodes){ if(skip(k)||(deg.get(k)||0)<3) continue;
+      const d=metros(ll,M); if(d<bd){ bd=d; J=k; } }
+    if(!J || bd>35) continue;
+    g.nodes.set(J, [M[0], M[1]]);                            // ALINHA o cruzamento ao círculo do DWG
+    const C=g.nodes.get(J);                                  // agora C = círculo do DWG, e os braços saem daqui (ângulos certos)
+    const cset=new Set([J]);
+    // braços = arestas incidentes ao cruzamento J (rua real)
+    const arms=[];
+    for(let i=0;i<g.edges.length;i++){
+      const e=g.edges[i]; if(!e) continue;
+      const [a,b,ow,st]=e; if(a!==J && b!==J) continue;
+      const centerIsB=(b===J), out=centerIsB?a:b, oll=g.nodes.get(out);
+      const ang=Math.atan2(oll[0]-C[0], (oll[1]-C[1])*cos0);  // ângulo do braço
+      const into  = centerIsB ? ow>=0 : ow<=0;           // fluxo ENTRA na rotatória?
+      const outof = centerIsB ? ow<=0 : ow>=0;           // fluxo SAI da rotatória?
+      arms.push({out,ang,into,outof,st});
+    }
+    if(arms.length<3){ continue; }                        // precisa ser junção real
+    arms.sort((x,y)=>x.ang-y.ang);
+    // 2) pontos do anel = braços + preenchimento (gaps ≤ 45°), ordenados por ângulo
+    const pts=[];
+    for(let j=0;j<arms.length;j++){
+      pts.push({ang:arms[j].ang, arm:j});
+      let gap=arms[(j+1)%arms.length].ang-arms[j].ang; if(gap<=0) gap+=2*Math.PI;
+      const steps=Math.max(1,Math.round(gap/(Math.PI/4)));
+      for(let s=1;s<steps;s++) pts.push({ang:arms[j].ang+gap*s/steps});
+    }
+    pts.sort((x,y)=>x.ang-y.ang);
+    const base='RT'+Math.round(C[0]*1e5)+'_'+Math.round(C[1]*1e5)+'_';
+    // o anel inteiro é um "nó composto": o Dijkstra cobra a manobra entrada→saída
+    (g.clusterCenter ||= new Map()).set(base.slice(0,-1), C);
+    pts.forEach((p,idx)=>{
+      p.id=base+idx;
+      (g.cluster ||= new Map()).set(p.id, base.slice(0,-1));
+      p.ll=[ C[0]+(r*Math.sin(p.ang))/110540, C[1]+(r*Math.cos(p.ang))/(111320*cos0) ];
+      g.nodes.set(p.id,p.ll); if(!g.adj.has(p.id)) g.adj.set(p.id,[]);
+    });
+    // 3) anel MÃO ÚNICA ANTI-HORÁRIA (tráfego BR): pts[k] -> pts[k+1] (ângulo crescente).
+    //    Bidirecional fazia 236 rotas contornarem a rot.2 no sentido horário (contramão).
+    for(let k=0;k<pts.length;k++){
+      const A=pts[k], B=pts[(k+1)%pts.length];
+      const w=metros(A.ll,B.ll);
+      g.adj.get(A.id).push({to:B.id,w,st:null});
+      g.edges.push([A.id,B.id,1,null]);
+    }
+    // 4) conecta cada braço ao seu ponto do anel, respeitando mão única
+    pts.forEach(p=>{ if(p.arm==null) return;
+      const arm=arms[p.arm], w=metros(g.nodes.get(arm.out),p.ll);
+      if(arm.into)  g.adj.get(arm.out).push({to:p.id,w,st:arm.st});   // entra no anel
+      if(arm.outof) g.adj.get(p.id).push({to:arm.out,w,st:arm.st});   // sai do anel
+      g.edges.push([arm.out,p.id, (arm.into&&arm.outof)?0:(arm.into?1:-1), arm.st]);
+    });
+    // 5) remove o miolo: isola nós centrais (sem cruzar reto) e some arestas antigas
+    for(const k of cset) g.adj.set(k,[]);
+    for(const [k,list] of g.adj){ if(cset.has(k)) continue; g.adj.set(k, list.filter(x=>!cset.has(x.to))); }
+    for(let i=0;i<g.edges.length;i++){ const e=g.edges[i]; if(e && (cset.has(e[0])||cset.has(e[1]))) g.edges[i]=null; }
+    g.edges=g.edges.filter(Boolean);
+  }
+}
+// CRUZAMENTO PICADO: a malha às vezes tem 2–3 nós de cruzamento a poucos metros
+// (ex.: saída da portaria, degrau de 8 m). Cada um contava como conversão de 90°,
+// mesmo seguindo reto. Agrupa nós grau≥3 ligados por trecho <12 m num "nó composto"
+// (mesmo tratamento da rotatória: cobra só a manobra entrada→saída).
+function agruparCruzamentos(g, maxM=12){
+  const esp=(k)=> isRT(k)||k[0]==='L'||k==='PORTARIA'||k.startsWith('p_')||k.startsWith('POI');
+  const deg=new Map();
+  for(const e of g.edges){ if(!e||esp(e[0])||esp(e[1])) continue; deg.set(e[0],(deg.get(e[0])||0)+1); deg.set(e[1],(deg.get(e[1])||0)+1); }
+  const par=new Map(), find=(x)=>{ while(par.get(x)!==x){ par.set(x,par.get(par.get(x))); x=par.get(x); } return x; };
+  for(const e of g.edges){
+    if(!e) continue; const [a,b]=e;
+    if(esp(a)||esp(b)||(deg.get(a)||0)<3||(deg.get(b)||0)<3) continue;
+    if(metros(g.nodes.get(a),g.nodes.get(b))>=maxM) continue;
+    if(!par.has(a)) par.set(a,a); if(!par.has(b)) par.set(b,b);
+    par.set(find(a),find(b));
+  }
+  const grupos=new Map();
+  for(const x of par.keys()){ const r=find(x); (grupos.get(r)||grupos.set(r,[]).get(r)).push(x); }
+  let i=0;
+  g.cluster ||= new Map(); g.clusterCenter ||= new Map();
+  for(const nos of grupos.values()){
+    const id='JC'+(i++); let s0=0,s1=0;
+    for(const x of nos){ g.cluster.set(x,id); const ll=g.nodes.get(x); s0+=ll[0]; s1+=ll[1]; }
+    g.clusterCenter.set(id,[s0/nos.length, s1/nos.length]);
+  }
+  return i;
+}
+// acessos de lote (p_*) inseridos DENTRO de um nó composto (ex.: lotes 567/568 na
+// borda da rotatória 4) passam a fazer parte dele — senão a rota "sairia" do anel ali.
+function absorverAcessos(g){
+  if(!g.cluster) return;
+  const inn=new Map();
+  for(const [a,L] of g.adj) for(const e of L) (inn.get(e.to)||inn.set(e.to,[]).get(e.to)).push(a);
+  for(const k of g.nodes.keys()){
+    if(!k.startsWith('p_')) continue;
+    const nb=(g.adj.get(k)||[]).map(e=>e.to).concat(inn.get(k)||[])
+      .filter(x=>x[0]!=='L' && !x.startsWith('POI') && x!=='PORTARIA');
+    const cs=nb.map(x=>g.cluster.get(x));
+    if(cs.length && cs.every(c=>c && c===cs[0])) g.cluster.set(k, cs[0]);
+  }
+}
+// insere um ponto (portaria/lote) no grafo, ligado ao ponto mais próximo da rua.
+// Respeita mão única: em via ow=1 só se anda a→pid→b; ow=-1 só b→pid→a.
+// prefDir (opcional, [dLat,dLng] normalizado): direção da FILEIRA do lote — em
+// lote de esquina, prefere a rua da FRENTE (paralela à fileira) à lateral.
+// escolhe o melhor ponto de acesso na rua (SEM inserir no grafo).
+// stFilter: restringe a uma street específica (consenso de fileira).
+function escolherAcesso(g, latlng, prefDir, stFilter){
+  const cands=[];
+  const stOk=(st)=> stFilter==null || (Array.isArray(stFilter)? stFilter.includes(st) : st===stFilter);
+  for(const [a,b,ow,st] of g.edges){
+    if(!stOk(st)) continue;
+    const pr=projetarNoSegmento(latlng, g.nodes.get(a), g.nodes.get(b));
+    cands.push({...pr,a,b,ow:ow||0,st});
+  }
+  if(!cands.length) return null;
+  cands.sort((x,y)=>x.dist-y.dist);
+  let best=cands[0];
+  if(prefDir){
+    const cos0=Math.cos(latlng[0]*rad);
+    const segDir=(c)=>{
+      const A=g.nodes.get(c.a), B=g.nodes.get(c.b);
+      let dy=B[0]-A[0], dx=(B[1]-A[1])*cos0;
+      const L=Math.hypot(dx,dy)||1; return [dy/L,dx/L];
+    };
+    const par=(c)=>{ const d=segDir(c); return Math.abs(d[0]*prefDir[0]+d[1]*prefDir[1]); };
+    const near=cands.filter(c=>c.dist<best.dist+20);
+    let bestSc=null;
+    for(const c of near){
+      const p=par(c);
+      if(p<0.6) continue;
+      const sc=c.dist-25*p;
+      if(!bestSc || sc<bestSc.sc) bestSc={...c, sc};
+    }
+    if(bestSc) best=bestSc;
+  }
+  return best;
+}
+function grudarNaRua(g, latlng, id, prefDir, stFilter, nudgeM){
+  g.nodes.set(id, latlng); g.adj.set(id, []);
+  let best=escolherAcesso(g, latlng, prefDir, stFilter);
+  if(!best && stFilter!=null) best=escolherAcesso(g, latlng, prefDir, null);
+  if(!best) return id;                       // sem ruas → nó isolado
+  if(nudgeM){
+    // empurra o ponto de acesso N metros ao longo do sentido de circulação da via
+    const A=g.nodes.get(best.a), B=g.nodes.get(best.b);
+    const cos0=Math.cos(best.latlng[0]*rad);
+    let dy=B[0]-A[0], dx=(B[1]-A[1])*cos0;
+    const L=Math.hypot(dx,dy)||1; dy/=L; dx/=L;
+    const s=(best.ow<0?-1:1)*nudgeM;         // ow=-1 circula b→a
+    best.latlng=[ best.latlng[0]+ (dy*s)/111320,
+                  best.latlng[1]+ (dx*s)/(111320*cos0) ];
+  }
+  const pid='p_'+id;
+  g.nodes.set(pid, best.latlng); g.adj.set(pid, []);
+  const dir=(x,y,st)=>{ const w=metros(g.nodes.get(x),g.nodes.get(y)); g.adj.get(x).push({to:y,w,st}); };
+  if(best.ow>=0){ dir(best.a,pid,best.st); dir(pid,best.b,best.st); }   // sentido a→b
+  if(best.ow<=0){ dir(best.b,pid,best.st); dir(pid,best.a,best.st); }   // sentido b→a
+  dir(pid,id,null); dir(id,pid,null);                                    // acesso ao destino
+  return id;
+}
+
+/* ---------------- Dijkstra (com heap) ---------------- */
+class MinHeap{
+  constructor(){this.a=[];}
+  push(x){const a=this.a;a.push(x);let i=a.length-1;while(i>0){const p=(i-1)>>1;if(a[p][0]<=a[i][0])break;[a[p],a[i]]=[a[i],a[p]];i=p;}}
+  pop(){const a=this.a;const top=a[0],last=a.pop();if(a.length){a[0]=last;let i=0;for(;;){let l=2*i+1,r=l+1,s=i;if(l<a.length&&a[l][0]<a[s][0])s=l;if(r<a.length&&a[r][0]<a[s][0])s=r;if(s===i)break;[a[s],a[i]]=[a[i],a[s]];i=s;}}return top;}
+  get size(){return this.a.length;}
+}
+// Dijkstra com PENALIDADE DE CURVA: estado = (nó, nó-anterior); virar custa
+// "metros extras" (reto 0 · leve 4 · 90° 12 · retorno 35), então entre caminhos
+// de custo parecido a rota segue reta — sem zigue-zagues desnecessários.
+function turnPenalty(g, a, b, c){
+  if(!a||!c) return 0;
+  return turnPenaltyPts(g.nodes.get(a), g.nodes.get(b), g.nodes.get(c));
+}
+function turnPenaltyPts(A, B, C){
+  if(!A||!B||!C) return 0;
+  const cos0=Math.cos(B[0]*rad);
+  const v1=[B[0]-A[0], (B[1]-A[1])*cos0], v2=[C[0]-B[0], (C[1]-B[1])*cos0];
+  const n1=Math.hypot(v1[0],v1[1])||1, n2=Math.hypot(v2[0],v2[1])||1;
+  const cosang=(v1[0]*v2[0]+v1[1]*v2[1])/(n1*n2);
+  if(cosang>0.87) return 0;      // <30°: reto
+  if(cosang>0.5)  return 10;     // 30–60°
+  if(cosang>-0.5) return 30;     // 60–120° (esquina)
+  return 80;                     // retorno
+}
+// conversões proibidas por STREET no nó (rotatória): {via: nó, from: street de
+// entrada, to: street de saída}. Confirmado em campo: quem desce a via norte (31)
+// NÃO corta direto pra curva (42) — os 427-431 são servidos subindo a interna (30)
+// e virando à direita na curva.
+const BANNED_ST_TURNS=[
+  {via:"-5.173394,-37.393791", from:31, to:42},
+];
+// NÓ COMPOSTO (rotatória ou cruzamento picado) = uma manobra só: dentro dele não se
+// cobra curva; na SAÍDA cobra-se a penalidade entre o nó de ENTRADA e o de SAÍDA,
+// medida pelo centro (como um cruzamento comum): seguir reto = 0, virar = esquina,
+// retorno = retorno. Por isso o estado carrega `ent` (nó por onde entrou).
+const isRT=(k)=> typeof k==='string' && k.startsWith('RT');
+function dijkstra(g, from, to){
+  const CL=g.cluster||new Map(), CC=g.clusterCenter||new Map();
+  const dist=new Map(), prev=new Map();
+  const k0=from+'||';
+  dist.set(k0,0);
+  const h=new MinHeap(); h.push([0,from,'','']);
+  let endKey=null;
+  while(h.size){
+    const [d,u,pu,ent]=h.pop();
+    const ku=u+'|'+pu+'|'+ent;
+    if((dist.get(ku)??Infinity)<d) continue;
+    if(u===to){ endKey=ku; break; }
+    const stIn = pu ? ((g.adj.get(pu)||[]).find(x=>x.to===u)||{}).st : null;
+    const cu=CL.get(u);
+    for(const e of (g.adj.get(u)||[])){
+      if(e.to===pu) continue;                        // sem meia-volta imediata
+      if(BANNED_ST_TURNS.some(t=>t.via===u && stIn===t.from && e.st===t.to)) continue;
+      const cv=CL.get(e.to);
+      let pen=0, nent='';
+      if(cu && cv===cu){ nent=ent; }                 // andando dentro do nó composto
+      else {
+        if(cu){                                      // saindo: cobra a manobra inteira
+          pen=(ent && e.to[0]!=='L')? turnPenaltyPts(g.nodes.get(ent), CC.get(cu), g.nodes.get(e.to)) : 0;
+        } else pen=turnPenalty(g,pu||null,u,e.to);
+        if(cv) nent=u;                               // entrando: guarda de onde veio
+      }
+      const nd=d+e.w+pen;
+      const kv=e.to+'|'+u+'|'+nent;
+      if(nd < (dist.get(kv)??Infinity)){
+        dist.set(kv,nd); prev.set(kv,ku); h.push([nd,e.to,u,nent]);
+      }
+    }
+  }
+  if(!endKey) return null;
+  const path=[]; let cur=endKey; let guard=0;
+  while(cur && guard++<10000){ path.unshift(cur.split('|')[0]); cur=prev.get(cur); }
+  // dist reportada = metros reais do caminho (sem as penalidades)
+  let real=0;
+  for(let i=0;i+1<path.length;i++){
+    real+=metros(g.nodes.get(path[i]), g.nodes.get(path[i+1]));
+  }
+  return { path, dist:real };
+}
+
+/* ================================================================
+   PROVEDORES DE DADOS
+================================================================ */
+
+// ---- MODO REAL: parse dos 3 GeoJSON (coords GeoJSON = [lng,lat]) ----
+function getProp(props, names){ if(!props) return undefined; for(const n of names) if(props[n]!=null) return props[n]; return undefined; }
+function centroide(ring){ let x=0,y=0,n=0; for(const c of ring){ x+=c[0]; y+=c[1]; n++; } return [x/n, y/n]; }
+
+function parseReal(gRuas, gLotes, gPort){
+  const lines=[];
+  for(const f of (gRuas.features||[])){
+    const gg=f.geometry; if(!gg) continue;
+    const ow=Number((f.properties||{}).oneway)||0;   // 0=dupla, 1=fwd, -1=rev
+    const st=(f.properties||{}).street ?? null;
+    if(gg.type==='LineString') lines.push({path:gg.coordinates.map(c=>[c[1],c[0]]), ow, st});
+    else if(gg.type==='MultiLineString') for(const part of gg.coordinates) lines.push({path:part.map(c=>[c[1],c[0]]), ow, st});
+  }
+  const lots=[];
+  for(const f of (gLotes.features||[])){
+    const gg=f.geometry, pr=f.properties||{};
+    let ll=null;
+    if(gg.type==='Point') ll=[gg.coordinates[1], gg.coordinates[0]];
+    else if(gg.type==='Polygon'){ const c=centroide(gg.coordinates[0]); ll=[c[1],c[0]]; }
+    else if(gg.type==='MultiPolygon'){ const c=centroide(gg.coordinates[0][0]); ll=[c[1],c[0]]; }
+    if(!ll) continue;
+    const id=Number(getProp(pr,['lote','LOTE','Lote','numero','NUMERO','num','id']));
+    if(!Number.isFinite(id)) continue;
+    const quadra=getProp(pr,['quadra','QUADRA','Quadra','qd','QD']) ?? '—';
+    lots.push({ id, quadra, latlng:ll });
+  }
+  let portaria=null, nome='Portaria';
+  const pf=(gPort.features||[])[0];
+  if(pf && pf.geometry && pf.geometry.type==='Point'){
+    portaria=[pf.geometry.coordinates[1], pf.geometry.coordinates[0]];
+    nome=getProp(pf.properties,['nome','NOME','name']) || nome;
+  }
+  return { mode:'real', lines, lots, portaria, portariaNome:nome };
+}
+
+// ---- MODO EXEMPLO: gera malha sobre o terreno real (Nova Betânia, Mossoró/RN) ----
+function gerarExemplo(){
+  const ANCHOR={lat:-5.17870,lng:-37.38980}, THETA=-35*rad;      // no terreno real; ajuste fino vem do DWG
+  const NC=6,NR=4,BW=90,BH=72,LOTS=12,DEPTH=26;
+  const PW=NC*BW, PH=NR*BH;
+  const toGeo=(x,y)=>{
+    const dx=x-PW/2, dy=y-PH/2;
+    const xr=dx*Math.cos(THETA)-dy*Math.sin(THETA), yr=dx*Math.sin(THETA)+dy*Math.cos(THETA);
+    return [ ANCHOR.lat + yr/111320, ANCHOR.lng + xr/(111320*Math.cos(ANCHOR.lat*rad)) ];
+  };
+  const lines=[];
+  for(let j=0;j<=NR;j++) for(let i=0;i<NC;i++) lines.push([toGeo(i*BW,j*BH), toGeo((i+1)*BW,j*BH)]);
+  for(let i=0;i<=NC;i++) for(let j=0;j<NR;j++) lines.push([toGeo(i*BW,j*BH), toGeo(i*BW,(j+1)*BH)]);
+  const lots=[]; let n=0;
+  for(let j=0;j<NR;j++) for(let i=0;i<NC;i++){
+    const quadra=j*NC+i+1, x0=i*BW, step=BW/LOTS;
+    for(const f of [{y:j*BH+DEPTH/2},{y:(j+1)*BH-DEPTH/2}])
+      for(let k=0;k<LOTS;k++){ n++; lots.push({id:n, quadra, latlng: toGeo(x0+step*(k+0.5), f.y)}); }
+  }
+  const portaria=toGeo(Math.floor(NC/2)*BW, 0);
+  return { mode:'exemplo', lines, lots, portaria, portariaNome:'Portaria' };
+}
+
+/* ================================================================
+   APP
+================================================================ */
+const $=(id)=>document.getElementById(id);
+const map = L.map('map', { zoomControl:false, attributionControl:true, maxZoom:19 });
+map.attributionControl.setPosition('topright');
+L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}',
+  { maxZoom:19, maxNativeZoom:18, attribution:'Imagery © Esri' }).addTo(map);
+map.setView([-5.1787,-37.3898], 16);
+const canvas = L.canvas({ padding:0.5 });
+
+let G, LOTS_BY_ID, PORT_NODE, ALL_BOUNDS, LMIN=1, LMAX=596;
+let routeLine=null, routeBg=null, routeDone=null, destMarker=null;
+
+async function carregarDados(){
+  try{
+    const [r,l,p] = await Promise.all(Object.values(CONFIG.dados).map(u=>fetch(u,{cache:'no-store'})));
+    if(r.ok && l.ok && p.ok){
+      const d = parseReal(await r.json(), await l.json(), await p.json());
+      if(d.lots.length && d.portaria) return d;
+    }
+  }catch(e){ /* sem dados reais → exemplo */ }
+  return gerarExemplo();
+}
+
+function desenharBase(data){
+  // ruas: traço branco discreto (a imagem de satélite já mostra a rua)
+  for(const line of data.lines){
+    const path=line.path||line;
+    L.polyline(path, {color:'#ffffff', weight:2, opacity:.35, renderer:canvas, interactive:false}).addTo(map);
+  }
+  // lotes
+  const bounds=L.latLngBounds([]);
+  for(const lot of data.lots){
+    const m=L.circleMarker(lot.latlng,{radius:2.2,color:'#fde68a',weight:1,fillColor:'#fde68a',fillOpacity:.75,renderer:canvas});
+    m.bindTooltip(`Lote ${lot.id}`,{direction:'top'}); m.addTo(map);
+    bounds.extend(lot.latlng);
+  }
+  bounds.extend(data.portaria);
+  L.marker(data.portaria,{icon:L.divIcon({className:'',html:'<div class="gate"></div>',iconSize:[16,16],iconAnchor:[8,8]})})
+    .addTo(map).bindTooltip(data.portariaNome,{direction:'top'});
+  return bounds.pad(0.15);
+}
+
+/* ---------------- interface ---------------- */
+// enquadra deixando espaço pro painel de baixo e pra pílula de cima
+const padOpts=()=>({ paddingTopLeft:[24,86], paddingBottomRight:[24,$('sheet').offsetHeight+16] });
+function fitAll(){ map.invalidateSize(); if(ALL_BOUNDS && ALL_BOUNDS.isValid()) map.fitBounds(ALL_BOUNDS, padOpts()); }
+function posFab(){ $('recenter').style.bottom=($('sheet').offsetHeight+14)+'px'; }
+function estado(s){
+  for(const id of ['stChoose','stNav','stArr']) $(id).hidden=(id!==s);
+  $('man').hidden=(s!=='stNav'); $('brand').hidden=(s==='stNav');
+  requestAnimationFrame(posFab);
+}
+function toast(t,ms=2200){ const el=$('toast'); el.textContent=t; el.classList.add('show'); clearTimeout(toast._t); toast._t=setTimeout(()=>el.classList.remove('show'),ms); }
+const fmtDist=(m)=> m>=1000 ? (m/1000).toFixed(1).replace('.',',')+' km'
+                   : (m>=200 ? Math.round(m/10)*10 : Math.max(0,Math.round(m/5)*5))+' m';
+
+/* ---------------- geometria da navegação ---------------- */
+// x = leste, y = norte, em metros, relativo a `ref`
+const xy=(ll,ref)=>[ (ll[1]-ref[1])*Math.cos(ref[0]*rad)*R*rad, (ll[0]-ref[0])*R*rad ];
+// ângulo da virada em B indo A→B→C, em graus: + esquerda, − direita
+function anguloVirada(A,B,C){
+  const a=xy(A,B), v2=xy(C,B), v1=[-a[0],-a[1]];
+  return Math.atan2(v1[0]*v2[1]-v1[1]*v2[0], v1[0]*v2[0]+v1[1]*v2[1])/rad;
+}
+const classificar=(a)=>{ const x=Math.abs(a); if(x<35) return 'reto'; if(x<60) return a>0?'leve-esq':'leve-dir'; if(x<140) return a>0?'esq':'dir'; return 'retorno'; };
+
+// manobras ao longo do caminho: nó composto (rotatória/cruzamento picado) = uma manobra
+function manobras(ids, pts, cum){
+  const CL=G.cluster||new Map(), CC=G.clusterCenter||new Map(), out=[];
+  let i=1;
+  while(i<ids.length-1){
+    const c=CL.get(ids[i]);
+    if(c){
+      let j=i; while(j<ids.length && CL.get(ids[j])===c) j++;
+      if(j<ids.length){
+        const ctr=CC.get(c), ang=anguloVirada(pts[i-1],ctr,pts[j]), rot=isRT(ids[i]), tipo=classificar(ang);
+        if(rot || tipo!=='reto') out.push({s:(cum[i]+cum[j-1])/2, ang, rot, tipo});
+      }
+      i=j; continue;
+    }
+    const ang=anguloVirada(pts[i-1],pts[i],pts[i+1]), tipo=classificar(ang);
+    if(tipo!=='reto') out.push({s:cum[i], ang, rot:false, tipo});
+    i++;
+  }
+  // junta viradas encostadas (<10 m) numa só — evita "vire, vire" em degrau de malha.
+  // Descarta os primeiros/últimos 12 m: é só o encaixe da portaria/bolinha na rua e
+  // a entrada no lote (a chegada já diz "lote à direita/esquerda").
+  const res=[], fim=cum[cum.length-1];
+  for(const m of out.filter(m=>m.s>12 && m.s<fim-12)){ const p=res[res.length-1];
+    if(p && !p.rot && !m.rot && m.s-p.s<10){ p.ang+=m.ang; p.tipo=classificar(p.ang); if(p.tipo==='reto') res.pop(); }
+    else res.push({...m});
+  }
+  return res;
+}
+const TXT={'esq':'Vire à esquerda','dir':'Vire à direita','leve-esq':'Mantenha à esquerda','leve-dir':'Mantenha à direita','retorno':'Faça o retorno'};
+function textoManobra(m){
+  if(!m.rot) return TXT[m.tipo];
+  const x=Math.abs(m.ang);
+  return 'Na rotatória, ' + (x<35?'siga em frente' : x<140 ? (m.ang>0?'saia à esquerda':'saia à direita') : 'faça o retorno');
+}
+const seta=(d,flip)=>`<svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"${flip?' style="transform:scaleX(-1)"':''}>${d}</svg>`;
+const SETA={
+  reto:'<path d="M12 20V5M6 11l6-6 6 6"/>',
+  vira:'<path d="M7 20v-7a4 4 0 0 1 4-4h8M15 5l4 4-4 4"/>',
+  leve:'<path d="M8 20v-6l8-8M10 6h6v6"/>',
+  retorno:'<path d="M16 20V9a4 4 0 0 0-8 0v4M4 10l4 4 4-4"/>',
+  rot:'<circle cx="12" cy="9" r="4"/><path d="M12 13v8M15 6l3-3M18 3v4M18 3h-4"/>',
+  chegada:'<path d="M6 21V4h11l-1.5 3.5L17 11H8"/>',
+};
+function iconeManobra(m){
+  if(m.rot) return seta(SETA.rot, m.ang>0);
+  if(m.tipo==='esq'||m.tipo==='dir') return seta(SETA.vira, m.tipo==='esq');
+  if(m.tipo==='leve-esq'||m.tipo==='leve-dir') return seta(SETA.leve, m.tipo==='leve-esq');
+  if(m.tipo==='retorno') return seta(SETA.retorno, m.ang<0);
+  return seta(SETA.reto);
+}
+function setManobra(icon, dist, txt){ $('manIcon').innerHTML=icon; $('manDist').textContent=dist; $('manTxt').textContent=txt; }
+
+/* ---------------- rota + navegação em tempo real ---------------- */
+const NAV={ dest:null, ids:null, pts:null, cum:null, mans:[], total:0, lastS:0, origemGPS:false, lado:null };
+const GPS={ ll:null, acc:999, heading:null, marker:null, accCircle:null, watch:null, offCount:0, lastRecalc:0, follow:true, arrived:false };
+const dentroDoLoteamento=(ll)=> !!(ALL_BOUNDS && ll && ALL_BOUNDS.contains(L.latLng(ll[0],ll[1])));
+
+// rota saindo de um ponto qualquer (a bolinha do GPS): cria um nó temporário na rua
+// mais próxima, respeitando a mão única e — em mão dupla — o rumo da moto (não manda
+// fazer meia-volta no meio da rua). O nó é removido depois do cálculo.
+function rotaDoPonto(ll, heading, destino){
+  const best=escolherAcesso(G, ll, null, null);
+  if(!best || best.dist>35) return null;
+  const id='p_GPS', A=G.nodes.get(best.a), B=G.nodes.get(best.b);
+  G.nodes.set(id, best.latlng); G.adj.set(id, []);
+  const add=(to)=>G.adj.get(id).push({to, w:metros(best.latlng,G.nodes.get(to)), st:best.st});
+  let paraB=best.ow>=0, paraA=best.ow<=0;
+  if(paraA && paraB && heading!=null){
+    const ab=xy(B,A), hv=[Math.sin(heading*rad), Math.cos(heading*rad)];
+    if(ab[0]*hv[0]+ab[1]*hv[1]>=0) paraA=false; else paraB=false;
+  }
+  if(paraB) add(best.b);
+  if(paraA) add(best.a);
+  let r=null;
+  try{ r=dijkstra(G, id, destino); if(r) r.coords=r.path.map(n=>G.nodes.get(n)); }
+  finally{ G.nodes.delete(id); G.adj.delete(id); }
+  return r;
+}
+
+function calcularRota(){
+  let r=null, deGPS=false;
+  if(GPS.ll && dentroDoLoteamento(GPS.ll) && GPS.acc<=40){ r=rotaDoPonto(GPS.ll, GPS.heading, NAV.dest.frente); deGPS=!!r; }
+  if(!r){ r=dijkstra(G, PORT_NODE, NAV.dest.frente); if(r) r.coords=r.path.map(n=>G.nodes.get(n)); }
+  if(!r) return null;
+  const ids=deGPS ? ['GPS'].concat(r.path) : r.path;
+  const pts=deGPS ? [GPS.ll].concat(r.coords) : r.coords;
+  const cum=[0]; for(let i=1;i<pts.length;i++) cum.push(cum[i-1]+metros(pts[i-1],pts[i]));
+  Object.assign(NAV,{ ids, pts, cum, total:cum[cum.length-1], lastS:0, origemGPS:deGPS, ditoFinal:false });
+  NAV.mans=manobras(ids, pts, cum);
+  NAV.lado=ladoDestino();
+  desenharRota();
+  return r;
+}
+// o destino fica à direita ou à esquerda de quem chega?
+function ladoDestino(){
+  const p=NAV.pts, b=p[p.length-1]; let k=p.length-2;
+  while(k>0 && metros(p[k],b)<8) k--;
+  if(k<0) return null;
+  const v=xy(b,p[k]), w=xy(NAV.dest.ll,p[k]);
+  return (v[0]*w[1]-v[1]*w[0])>0 ? 'esquerda' : 'direita';
+}
+function desenharRota(){
+  [routeLine,routeBg,routeDone].forEach(l=>l&&map.removeLayer(l));
+  routeBg  =L.polyline(NAV.pts,{color:'#ffffff',weight:12,opacity:.95,renderer:canvas,interactive:false}).addTo(map);
+  routeLine=L.polyline(NAV.pts,{color:'#0fb5a6',weight:7,renderer:canvas,interactive:false}).addTo(map);
+  routeDone=L.polyline([],{color:'#94a3b8',weight:7,renderer:canvas,interactive:false}).addTo(map);
+  if(destMarker) map.removeLayer(destMarker);
+  destMarker=L.marker(NAV.dest.ll,{icon:L.divIcon({className:'',iconSize:[34,34],iconAnchor:[17,17],
+    html:'<div class="pin"><svg width="16" height="16" viewBox="0 0 24 24" fill="#fff"><path d="M5 21V4h11l-1.5 3.5L16 11H7v10z"/></svg></div>'})}).addTo(map);
+}
+// projeta a bolinha na rota; prefere o trecho logo à frente do último ponto conhecido
+// (em rota com retorno a rua aparece duas vezes e a projeção não pode "pular" pro fim)
+function projetarRota(ll){
+  let glob=null, perto=null;
+  for(let i=0;i+1<NAV.pts.length;i++){
+    const pr=projetarNoSegmento(ll,NAV.pts[i],NAV.pts[i+1]);
+    const c={d:pr.dist, s:NAV.cum[i]+metros(NAV.pts[i],pr.latlng)};
+    if(!glob||c.d<glob.d) glob=c;
+    if(c.s>=NAV.lastS-30 && c.s<=NAV.lastS+150 && (!perto||c.d<perto.d)) perto=c;
+  }
+  const r=(perto && perto.d<glob.d+15) ? perto : glob;
+  NAV.lastS=Math.max(NAV.lastS, r.s);
+  return r;
+}
+function trechoAte(s){
+  const p=NAV.pts, c=NAV.cum, out=[];
+  for(let i=0;i+1<p.length;i++){
+    out.push(p[i]);
+    if(c[i+1]>=s){ const t=(s-c[i])/((c[i+1]-c[i])||1);
+      out.push([p[i][0]+(p[i+1][0]-p[i][0])*t, p[i][1]+(p[i+1][1]-p[i][1])*t]); return out; }
+  }
+  return p.slice();
+}
+// centraliza deixando a bolinha acima do painel
+function centrarEm(ll, zoom){
+  const z=zoom||map.getZoom(), h=$('sheet').offsetHeight;
+  const pt=map.project(L.latLng(ll[0],ll[1]), z).add([0, h/2-40]);
+  map.setView(map.unproject(pt, z), z, {animate:true});
+}
+
+function atualizarNav(){
+  if(!NAV.pts || GPS.arrived) return;
+  let s=0;
+  const dentro=dentroDoLoteamento(GPS.ll);
+  if(GPS.ll && dentro){
+    const pr=projetarRota(GPS.ll); s=pr.s;
+    // saiu da rota? (2 leituras seguidas longe da linha, GPS razoável) → recalcula
+    const lim=Math.max(25, Math.min(GPS.acc, 45));
+    GPS.offCount = (pr.d>lim && GPS.acc<=50) ? GPS.offCount+1 : 0;
+    if(GPS.offCount>=2 && Date.now()-GPS.lastRecalc>5000){
+      GPS.lastRecalc=Date.now(); GPS.offCount=0;
+      if(calcularRota()){ toast('Rota recalculada'); falar('Rota recalculada.', true); return atualizarNav(); }
+    }
+    // chegou?
+    if(NAV.total-s<15 || metros(GPS.ll, NAV.pts[NAV.pts.length-1])<18) return chegou();
+    if(GPS.follow) centrarEm(GPS.ll, map.getZoom()<17 ? 18 : null);
+    $('navHint').textContent='';
+  } else {
+    $('navHint').textContent = !GPS.ll ? $('navHint').textContent
+      : 'A rota começa na portaria — a bolinha aparece no caminho quando você entrar.';
+  }
+  routeDone.setLatLngs(trechoAte(s));
+  const falta=Math.max(0, NAV.total-s);
+  const min=Math.max(1, Math.round(falta/(CONFIG.velocidadeMotoKmh*1000/60)));
+  $('rDist').textContent=fmtDist(falta);
+  $('rTempo').textContent=min+' min';
+  $('rEta').textContent=new Date(Date.now()+min*60000).toLocaleTimeString('pt-BR',{hour:'2-digit',minute:'2-digit'});
+  $('progBar').style.width=(NAV.total ? Math.min(100,100*s/NAV.total) : 0)+'%';
+  const prox=NAV.mans.find(m=>m.s>s+3);
+  if(prox) setManobra(iconeManobra(prox), fmtDist(prox.s-s), textoManobra(prox));
+  else setManobra(seta(SETA.chegada), fmtDist(falta), `${NAV.dest.nome} à ${NAV.lado||'frente'}`);
+  if(GPS.ll && dentro) vozNav(s, falta);
+}
+
+// rota até um lote OU ponto nomeado. Termina na RUA em frente ao destino ('p_<id>').
+function rotaPara(destNode, destLatLng, nome){
+  $('err').textContent='';
+  const frente=G.nodes.has('p_'+destNode) ? 'p_'+destNode : destNode;
+  NAV.dest={ node:destNode, frente, ll:destLatLng, nome };
+  GPS.arrived=false; GPS.offCount=0;
+  if(!calcularRota()){ NAV.dest=null; $('err').textContent='Não encontrei rota até esse destino.'; return; }
+  $('dName').textContent=nome;
+  estado('stNav');
+  vozInicio();                    // ainda dentro do toque → libera a voz no iPhone
+  ligarGPS(); manterTelaLigada();
+  GPS.follow=true; $('recenter').hidden=true;
+  requestAnimationFrame(()=>{ map.fitBounds(L.latLngBounds(NAV.pts).pad(0.1), Object.assign(padOpts(),{maxZoom:18})); atualizarNav(); });
+}
+function chegou(){
+  GPS.arrived=true;
+  routeDone.setLatLngs(NAV.pts);
+  $('arrTxt').textContent=`${NAV.dest.nome} fica à sua ${NAV.lado||'frente'}.`;
+  estado('stArr'); soltarTela(); confete();
+  falar(`Você chegou. ${maiusc(comArtigo(NAV.dest.nome))} fica à sua ${NAV.lado||'frente'}.`, true);
+}
+function encerrar(){
+  if('speechSynthesis' in window) speechSynthesis.cancel();
+  NAV.dest=null; NAV.pts=null; GPS.arrived=false;
+  [routeLine,routeBg,routeDone,destMarker].forEach(l=>l&&map.removeLayer(l));
+  routeLine=routeBg=routeDone=destMarker=null;
+  $('lote').value=''; $('err').textContent=''; $('recenter').hidden=true;
+  estado('stChoose'); soltarTela(); requestAnimationFrame(fitAll);
+}
+function traçar(ev){
+  if(ev) ev.preventDefault();
+  $('err').textContent='';
+  const v=$('lote').value.trim(), lot=LOTS_BY_ID.get(parseInt(v,10));
+  if(!lot){ $('err').textContent = v ? `Não existe o lote ${v}. Os lotes vão de ${LMIN} a ${LMAX}.` : 'Digite o número do lote.'; return; }
+  $('lote').blur();
+  rotaPara('L'+lot.id, lot.latlng, `Lote ${lot.id}`);
+}
+
+/* ---------------- GPS: bolinha em tempo real ---------------- */
+function ligarGPS(){
+  if(!('geolocation' in navigator)){ $('navHint').textContent='Este aparelho não informa a localização — siga a linha no mapa.'; return; }
+  if(GPS.watch!=null) return;
+  $('navHint').textContent='Procurando sua localização…';
+  GPS.watch=navigator.geolocation.watchPosition(onFix, onGeoErr, {enableHighAccuracy:true, maximumAge:1000, timeout:20000});
+}
+function onGeoErr(e){
+  $('navHint').textContent = e.code===1
+    ? 'Localização bloqueada. Permita o acesso pra ver onde você está — enquanto isso, siga a linha.'
+    : 'Sem sinal de GPS agora — siga a linha no mapa.';
+}
+function onFix(pos){
+  const c=pos.coords, ll=[c.latitude,c.longitude];
+  // rumo: o do GPS quando está andando; senão, o do deslocamento entre leituras
+  let hd=(c.heading!=null && !isNaN(c.heading) && (c.speed||0)>0.8) ? c.heading : null;
+  if(hd==null && GPS.ll && metros(GPS.ll,ll)>4){ const v=xy(ll,GPS.ll); hd=(Math.atan2(v[0],v[1])/rad+360)%360; }
+  if(hd!=null) GPS.heading=hd;
+  GPS.ll=ll; GPS.acc=c.accuracy||999;
+  desenharEu();
+  if(NAV.dest) atualizarNav();
+}
+function desenharEu(){
+  const cone=`display:${GPS.heading==null?'none':'block'};transform:rotate(${GPS.heading||0}deg)`;
+  if(!GPS.marker){
+    GPS.accCircle=L.circle(GPS.ll,{radius:Math.min(GPS.acc,80),color:'#2563eb',weight:1,opacity:.35,fillOpacity:.08,interactive:false}).addTo(map);
+    GPS.marker=L.marker(GPS.ll,{interactive:false,zIndexOffset:1000,icon:L.divIcon({className:'',iconSize:[24,24],iconAnchor:[12,12],
+      html:`<div class="me"><div class="cone" style="${cone}"></div><div class="halo"></div><div class="dot"></div></div>`})}).addTo(map);
+  } else {
+    GPS.marker.setLatLng(GPS.ll); GPS.accCircle.setLatLng(GPS.ll).setRadius(Math.min(GPS.acc,80));
+    const el=GPS.marker.getElement(), cn=el && el.querySelector('.cone');
+    if(cn) cn.style.cssText=cone;
+  }
+}
+
+/* ---------------- voz das instruções ----------------
+   Sintetizador do próprio aparelho (pt-BR, funciona sem internet). Avisa ~150 m antes
+   da manobra ("Em 150 metros, vire à direita") e de novo na hora ("Vire à direita").
+   No iPhone a voz só é liberada depois de um toque — por isso a 1ª fala sai no próprio
+   toque que traça a rota (vozInicio). */
+const VOZ={ ligada:true, voz:null };
+try{ VOZ.ligada = localStorage.getItem('copa.voz')!=='0'; }catch(e){}
+function escolherVoz(){
+  const vs=speechSynthesis.getVoices();
+  VOZ.voz = vs.find(v=>/pt[-_]BR/i.test(v.lang) && /Luciana|Francisca|Google/i.test(v.name))
+         || vs.find(v=>/pt[-_]BR/i.test(v.lang)) || vs.find(v=>/^pt/i.test(v.lang)) || null;
+}
+if('speechSynthesis' in window){ escolherVoz(); speechSynthesis.onvoiceschanged=escolherVoz; }
+function falar(txt, urgente){
+  (window._falas ||= []).push(txt);                  // registro (testes/depuração)
+  if(!VOZ.ligada || !('speechSynthesis' in window)) return;
+  if(urgente) speechSynthesis.cancel();
+  const u=new SpeechSynthesisUtterance(txt);
+  u.lang='pt-BR'; if(VOZ.voz) u.voice=VOZ.voz; u.rate=1.02;
+  speechSynthesis.speak(u);
+}
+const distFalada=(m)=> m>=1000 ? `${(m/1000).toFixed(1).replace('.',',')} quilômetros`
+                     : `${m>100 ? Math.round(m/50)*50 : Math.max(10, Math.round(m/10)*10)} metros`;
+const minusc=(t)=> t.charAt(0).toLowerCase()+t.slice(1);
+const maiusc=(t)=> t.charAt(0).toUpperCase()+t.slice(1);
+// "o lote 367", "o Clube", "a Saída", "a Administração"
+const comArtigo=(nome)=> /^Lote /.test(nome) ? 'o '+minusc(nome) : (/(a|ção|ída)$/i.test(nome) ? 'a ' : 'o ')+nome;
+function vozInicio(){
+  const min=Math.max(1, Math.round(NAV.total/(CONFIG.velocidadeMotoKmh*1000/60))), prox=NAV.mans[0];
+  let t=`Rota para ${comArtigo(NAV.dest.nome)}: ${distFalada(NAV.total)}, cerca de ${min} ${min>1?'minutos':'minuto'}.`;
+  if(prox && prox.s<=200){ t+=` Em ${distFalada(prox.s)}, ${minusc(textoManobra(prox))}.`; prox.ditoLonge=true; }
+  else if(prox) t+=` Siga em frente por ${distFalada(prox.s)}.`;
+  falar(t, true);
+}
+// a cada leitura do GPS: aviso antecipado (60–200 m) e aviso na hora (≤40 m), uma vez cada
+function vozNav(s, falta){
+  const prox=NAV.mans.find(m=>m.s>s+3);
+  if(prox){
+    const d=prox.s-s;
+    if(d<=40 && !prox.ditoPerto){ prox.ditoPerto=prox.ditoLonge=true; falar(textoManobra(prox), true); }
+    else if(d<=200 && d>60 && !prox.ditoLonge){ prox.ditoLonge=true; falar(`Em ${distFalada(d)}, ${minusc(textoManobra(prox))}.`); }
+  } else if(falta<=70 && !NAV.ditoFinal){
+    NAV.ditoFinal=true; falar(`Em ${distFalada(falta)}, ${comArtigo(NAV.dest.nome)} fica à sua ${NAV.lado||'frente'}.`);
+  }
+}
+const ICON_SOM_ON='<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#0f172a" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M4 9v6h4l5 4V5L8 9z"/><path d="M16.5 8.5a5 5 0 0 1 0 7M19 6a8.5 8.5 0 0 1 0 12"/></svg>';
+const ICON_SOM_OFF='<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#94a3b8" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M4 9v6h4l5 4V5L8 9z"/><path d="M17 9l5 6M22 9l-5 6"/></svg>';
+function setSom(on){
+  VOZ.ligada=on; try{ localStorage.setItem('copa.voz', on?'1':'0'); }catch(e){}
+  if(!on && 'speechSynthesis' in window) speechSynthesis.cancel();
+  const b=$('som'); b.innerHTML=on?ICON_SOM_ON:ICON_SOM_OFF;
+  b.setAttribute('aria-pressed', on); b.setAttribute('aria-label', on?'Voz ligada':'Voz desligada');
+}
+
+/* tela ligada durante a navegação (o motoqueiro não precisa ficar tocando) */
+let WAKE=null;
+async function manterTelaLigada(){ try{ if('wakeLock' in navigator) WAKE=await navigator.wakeLock.request('screen'); }catch(e){} }
+function soltarTela(){ try{ WAKE && WAKE.release(); }catch(e){} WAKE=null; }
+document.addEventListener('visibilitychange',()=>{ if(document.visibilityState==='visible' && NAV.dest && !GPS.arrived) manterTelaLigada(); });
+
+/* confete na chegada (inspirado no "Confetti" do naocodei: gravidade, giro e resistência do ar) */
+function confete(){
+  const cv=$('confetti'), ctx=cv.getContext('2d'), dpr=window.devicePixelRatio||1, W=innerWidth, H=innerHeight;
+  cv.hidden=false; cv.width=W*dpr; cv.height=H*dpr; ctx.setTransform(dpr,0,0,dpr,0,0);
+  const cores=['#14b8a6','#2563eb','#f59e0b','#ef4444','#a855f7','#22c55e'];
+  const P=Array.from({length:140},()=>({x:W/2+(Math.random()-.5)*90, y:H*.6, vx:(Math.random()-.5)*10, vy:-(7+Math.random()*9),
+    r:5+Math.random()*5, a:Math.random()*6.28, va:(Math.random()-.5)*.3, c:cores[Math.random()*cores.length|0]}));
+  const t0=performance.now();
+  (function quadro(t){
+    ctx.clearRect(0,0,W,H); let vivos=0;
+    for(const p of P){ p.vy+=.28; p.vx*=.985; p.vy*=.985; p.x+=p.vx; p.y+=p.vy; p.a+=p.va;
+      if(p.y<H+20){ vivos++; ctx.save(); ctx.translate(p.x,p.y); ctx.rotate(p.a); ctx.fillStyle=p.c; ctx.fillRect(-p.r/2,-p.r/4,p.r,p.r/2); ctx.restore(); } }
+    if(vivos && t-t0<4500) requestAnimationFrame(quadro); else { ctx.clearRect(0,0,W,H); cv.hidden=true; }
+  })(t0);
+}
+
+/* ícones dos destinos fixos */
+const ICON_POI={
+  'Clube':'<svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#0d9488" stroke-width="2.2" stroke-linecap="round"><path d="M2 17c2 0 2-1.5 4-1.5S8 17 10 17s2-1.5 4-1.5 2 1.5 4 1.5 2-1.5 4-1.5M2 21c2 0 2-1.5 4-1.5S8 21 10 21s2-1.5 4-1.5 2 1.5 4 1.5 2-1.5 4-1.5"/><path d="M8 14V5a2 2 0 0 1 4 0M14 14V5a2 2 0 0 1 4 0M8 9h6"/></svg>',
+  'Saída':'<svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#e11d48" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M10 4H5v16h5M14 8l4 4-4 4M18 12H9"/></svg>',
+  'Administração':'<svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#2563eb" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 21V7l8-4 8 4v14M9 21v-5h6v5M8 10h.01M12 10h.01M16 10h.01"/></svg>',
+};
+const ORDEM_POI=['Clube','Saída','Administração'];
+
+(async function init(){
+  const data = await carregarDados();
+
+  // motor comum: grafo + grudar portaria/lotes
+  G = buildGraph(data.lines);
+  // rotatórias: só MARCADOR visual por ora. A injeção de anel automática não casa
+  // com o DWG (o cruzamento da malha fica ~9m fora do círculo do DWG → zigue-zague).
+  // O contorno correto virá redesenhando a geometria da rua conforme o DWG.
+  // rot. 1 (entrada) fica só marcador (rua do clube reta); 2/3/4 ganham o contorno alinhado ao DWG.
+  const SEM_CIRCULACAO=['Rotatória 1'];
+  try{
+    const rr=await fetch('dados/rotatorias.geojson',{cache:'no-store'});
+    if(rr.ok){ const rj=await rr.json();
+      const rots=(rj.features||[]).map(f=>({lat:f.geometry.coordinates[1], lng:f.geometry.coordinates[0], raio:(f.properties||{}).raio_m||6, nome:(f.properties||{}).nome}));
+      injectRotatorias(G, rots.filter(r=>!SEM_CIRCULACAO.includes(r.nome)));
+      window.ROTATORIAS=rots;
+    }
+  }catch(e){ console.warn('rotatorias', e); }
+  agruparCruzamentos(G);
+  PORT_NODE = grudarNaRua(G, data.portaria, 'PORTARIA');
+  LOTS_BY_ID = new Map();
+  for(const lot of data.lots) LOTS_BY_ID.set(lot.id, lot);
+  // direção da fileira: vizinho de numeração (id±1) a <25m define a frente do lote
+  const rowDir=(lot)=>{
+    // usa o vizinho de numeração MAIS PRÓXIMO (o outro pode estar do lado de lá da esquina)
+    const cos0=Math.cos(lot.latlng[0]*rad);
+    let best=null;
+    for(const nb of [LOTS_BY_ID.get(lot.id-1), LOTS_BY_ID.get(lot.id+1)]){
+      if(!nb) continue;
+      let dy=nb.latlng[0]-lot.latlng[0], dx=(nb.latlng[1]-lot.latlng[1])*cos0;
+      const L=Math.hypot(dx,dy)*6378137*rad;   // metros aprox
+      if(L>2 && L<25 && (!best || L<best.L)) best={L, dir:[dy/Math.hypot(dx,dy), dx/Math.hypot(dx,dy)]};
+    }
+    return best ? best.dir : null;
+  };
+  // CONSENSO DE FILEIRA: acessos de uma fileira contígua devem ficar na MESMA rua.
+  // fase 1: escolha preliminar de cada lote
+  const pre=new Map();
+  for(const lot of data.lots){
+    const b=escolherAcesso(G, lot.latlng, rowDir(lot), null);
+    pre.set(lot.id, b?b.st:null);
+  }
+  // fase 2: fileiras = sequências de ids consecutivos com passo <25m; street modal
+  const mFileira=(a,b)=>{ const cos0=Math.cos(a[0]*rad);
+    return Math.hypot((b[0]-a[0]), (b[1]-a[1])*cos0)*6378137*rad; };
+  const idsSeq=data.lots.map(l=>l.id).sort((a,b)=>a-b);
+  const byId=new Map(data.lots.map(l=>[l.id,l]));
+  let fila=[];
+  const filas=[];
+  for(let i=0;i<idsSeq.length;i++){
+    const id=idsSeq[i];
+    if(fila.length){
+      const prevLot=byId.get(fila[fila.length-1]);
+      if(id!==fila[fila.length-1]+1 || mFileira(prevLot.latlng, byId.get(id).latlng)>=25){ filas.push(fila); fila=[]; }
+    }
+    fila.push(id);
+  }
+  if(fila.length) filas.push(fila);
+  const alvoSt=new Map();
+  for(const f of filas){
+    if(f.length<3) continue;                       // fileira curta: sem consenso
+    const cnt=new Map();
+    for(const id of f){ const s=pre.get(id); if(s!=null && s>=0) cnt.set(s,(cnt.get(s)||0)+1); }
+    let modal=null, mx=0;
+    cnt.forEach((v,k)=>{ if(v>mx){mx=v;modal=k;} });
+    if(modal!=null && mx>=f.length*0.5)            // maioria clara
+      for(const id of f) if(pre.get(id)!==modal) alvoSt.set(id, modal);
+  }
+  // overrides manuais confirmados em campo (frente real do lote → street(s))
+  // 427-431: frente é a CURVA da rotatória norte (streets 42-45, fluxo p/ leste)
+  const CURVA=[42,43,44,45];
+  const ACC_OVERRIDE={427:CURVA,428:CURVA,429:CURVA,430:CURVA,431:CURVA};
+  // grupos que grudavam na rua de trás → forçar a rua da FRENTE (mais próxima)
+  for(let i=13;i<=21;i++) ACC_OVERRIDE[i]=11;
+  for(let i=35;i<=47;i++) ACC_OVERRIDE[i]=9;
+  for(let i=63;i<=80;i++) ACC_OVERRIDE[i]=13;
+  // ajuste fino do ponto de chegada (metros ao longo do sentido da via)
+  const ACC_NUDGE={427:6};
+  // fase 3: insere acessos (outliers presos à street modal da fileira)
+  for(const lot of data.lots)
+    grudarNaRua(G, lot.latlng, 'L'+lot.id, rowDir(lot), ACC_OVERRIDE[lot.id] ?? alvoSt.get(lot.id) ?? null, ACC_NUDGE[lot.id]);
+
+  // POIs nomeados (opcional): dados/pois.geojson
+  let pois=[];
+  try{
+    const pr=await fetch('dados/pois.geojson',{cache:'no-store'});
+    if(pr.ok){ const pj=await pr.json();
+      pois=(pj.features||[]).map(f=>({nome:(f.properties||{}).nome||'POI', latlng:[f.geometry.coordinates[1],f.geometry.coordinates[0]]}));
+    }
+  }catch(e){}
+  pois.forEach((p,i)=>{ p.node='POI'+i; grudarNaRua(G, p.latlng, p.node); });
+  absorverAcessos(G);
+
+  ALL_BOUNDS = desenharBase(data);
+  // rotatórias no mapa (contorno branco discreto)
+  (window.ROTATORIAS||[]).forEach(rt=>{
+    L.circle([rt.lat,rt.lng],{radius:(rt.raio||6),color:'#ffffff',weight:2,opacity:.8,fillColor:'#ffffff',fillOpacity:.15,interactive:false}).addTo(map);
+  });
+  // destinos fixos: só Clube, Saída e Administração (nessa ordem)
+  pois.sort((a,b)=>(ORDEM_POI.indexOf(a.nome)+99)%99-(ORDEM_POI.indexOf(b.nome)+99)%99);
+  for(const p of pois){
+    const ic=ICON_POI[p.nome]||ICON_POI['Administração'];
+    L.marker(p.latlng,{icon:L.divIcon({className:'',html:`<div class="poi">${ic.replace(/width="22" height="22"/,'width="16" height="16"')}</div>`,iconSize:[28,28],iconAnchor:[14,14]})})
+      .addTo(map).bindTooltip(p.nome,{direction:'top'});
+    if(!ORDEM_POI.includes(p.nome)) continue;
+    const b=document.createElement('button'); b.className='place press'; b.type='button';
+    b.innerHTML=`<span class="pi">${ic}</span>${p.nome}`;
+    b.onclick=()=>rotaPara(p.node, p.latlng, p.nome);
+    $('places').appendChild(b);
+  }
+
+  const ids=[...LOTS_BY_ID.keys()]; LMIN=Math.min(...ids); LMAX=Math.max(...ids);
+  $('lote').placeholder=`Número do lote (${LMIN} a ${LMAX})`;
+  if(data.mode!=='real') console.warn('Sem dados reais em dados/*.geojson — usando malha de exemplo.');
+
+  estado('stChoose');
+  fitAll(); map.whenReady(()=>setTimeout(fitAll,150)); window.addEventListener('load',()=>setTimeout(fitAll,350));
+  window.addEventListener('resize',()=>{ posFab(); });
+
+  // eventos
+  $('fLote').addEventListener('submit',traçar);
+  $('cancel').onclick=encerrar;
+  setSom(VOZ.ligada);
+  $('som').onclick=()=>{ setSom(!VOZ.ligada); if(VOZ.ligada) falar('Voz ligada.', true); };
+  $('again').onclick=encerrar;
+  $('recenter').onclick=()=>{ GPS.follow=true; $('recenter').hidden=true; if(GPS.ll) centrarEm(GPS.ll, Math.max(map.getZoom(),18)); };
+  map.on('dragstart',()=>{ if(NAV.dest && !GPS.arrived){ GPS.follow=false; $('recenter').hidden=false; posFab(); } });
+
+  // se a pessoa já deu permissão de localização antes, a bolinha aparece sem perguntar de novo
+  try{ navigator.permissions && navigator.permissions.query({name:'geolocation'}).then(p=>{ if(p.state==='granted') ligarGPS(); }).catch(()=>{}); }catch(e){}
+
+  // PWA: funciona como app (tela cheia, ícone na tela inicial) e abre mesmo com sinal fraco
+  if('serviceWorker' in navigator && location.protocol!=='file:') navigator.serviceWorker.register('sw.js').catch(()=>{});
+
+  // expõe p/ depuração no console (e p/ simular o GPS nos testes)
+  Object.assign(window,{ G, LOTS_BY_ID, PORT_NODE, dijkstra, rotaPara, NAV, GPS, onFix });
+  window.simularGPS=(pontos, ms=700, acc=6)=>{ clearInterval(window._sim); let i=0;
+    window._sim=setInterval(()=>{ if(i>=pontos.length) return clearInterval(window._sim);
+      const p=pontos[i++]; onFix({coords:{latitude:p[0],longitude:p[1],accuracy:acc,heading:null,speed:null}}); }, ms); };
+})();
+</script>
+</body>
+</html>
