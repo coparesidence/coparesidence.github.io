@@ -265,24 +265,8 @@ class MinHeap{
   pop(){const a=this.a;const top=a[0],last=a.pop();if(a.length){a[0]=last;let i=0;for(;;){let l=2*i+1,r=l+1,s=i;if(l<a.length&&a[l][0]<a[s][0])s=l;if(r<a.length&&a[r][0]<a[s][0])s=r;if(s===i)break;[a[s],a[i]]=[a[i],a[s]];i=s;}}return top;}
   get size(){return this.a.length;}
 }
-// Dijkstra com PENALIDADE DE CURVA: estado = (nó, nó-anterior); virar custa
-// "metros extras" (reto 0 · leve 4 · 90° 12 · retorno 35), então entre caminhos
-// de custo parecido a rota segue reta — sem zigue-zagues desnecessários.
-function turnPenalty(g, a, b, c){
-  if(!a||!c) return 0;
-  return turnPenaltyPts(g.nodes.get(a), g.nodes.get(b), g.nodes.get(c));
-}
-function turnPenaltyPts(A, B, C){
-  if(!A||!B||!C) return 0;
-  const cos0=Math.cos(B[0]*rad);
-  const v1=[B[0]-A[0], (B[1]-A[1])*cos0], v2=[C[0]-B[0], (C[1]-B[1])*cos0];
-  const n1=Math.hypot(v1[0],v1[1])||1, n2=Math.hypot(v2[0],v2[1])||1;
-  const cosang=(v1[0]*v2[0]+v1[1]*v2[1])/(n1*n2);
-  if(cosang>0.87) return 0;      // <30°: reto
-  if(cosang>0.5)  return 10;     // 30–60°
-  if(cosang>-0.5) return 30;     // 60–120° (esquina)
-  return 80;                     // retorno
-}
+// Dijkstra com PENALIDADE DE CURVA: virar custa "metros extras" (ver penalidadeRumo),
+// então entre caminhos de custo parecido a rota segue reta — sem zigue-zagues.
 // conversões proibidas por STREET no nó (rotatória): {via: nó, from: street de
 // entrada, to: street de saída}. Confirmado em campo: quem desce a via norte (31)
 // NÃO corta direto pra curva (42) — os 427-431 são servidos subindo a interna (30)
@@ -302,38 +286,62 @@ function construirReverso(g){
   for(const [a,L] of g.adj) for(const e of L) (r.get(e.to)||r.set(e.to,[]).get(e.to)).push({to:a, w:e.w, st:e.st});
   g.radj=r;
 }
+// penalidade entre dois RUMOS: o da rua por onde chegou (A→B) e o da rua por onde sai (C→D)
+function penalidadeRumo(A,B,C,D){
+  const cos0=Math.cos(B[0]*rad);
+  const v1=[B[0]-A[0], (B[1]-A[1])*cos0], v2=[D[0]-C[0], (D[1]-C[1])*cos0];
+  const cosang=(v1[0]*v2[0]+v1[1]*v2[1])/((Math.hypot(v1[0],v1[1])*Math.hypot(v2[0],v2[1]))||1);
+  if(cosang>0.87) return 0;      // <30°: reto
+  if(cosang>0.5)  return 10;     // 30–60°
+  if(cosang>-0.5) return 30;     // 60–120° (esquina)
+  if(cosang>-0.766) return 45;   // 120–140°: curva fechada (esquina aguda das diagonais)
+  return 80;                     // >140°: retorno (o mesmo limite que a voz chama de "Faça o retorno")
+}
 function dijkstra(g, from, to, opt){
   const pe=!!(opt && opt.pe);
   const CL=g.cluster||new Map(), CC=g.clusterCenter||new Map();
+  // o raio de ligação anel↔rua (RA…) conta como parte da rotatória
+  const grupo=(n)=>{ const c=CL.get(n); if(c) return c;
+    if(n.startsWith('RA')){ const r='RT'+n.slice(2, n.lastIndexOf('_')); if(CC.has(r)) return r; } };
   const dist=new Map(), prev=new Map();
   const k0=from+'||';
   dist.set(k0,0);
-  const h=new MinHeap(); h.push([0,from,'','']);
+  // rumo = [nó, nó] do último trecho de rua com ≥1 m antes de u. A curva é medida
+  // rumo-contra-rumo: trechos de ~0 m (acesso de lote em cima da quina, raio em cima
+  // do acesso) não contam, e o nó composto inteiro (rotatória/cruzamento picado) vira
+  // UMA manobra: rumo de chegada × rumo da rua de saída. Assim a rua que passa ao lado
+  // da rotatória e segue reta não "vira", e o retorno pela rotatória continua retorno.
+  const h=new MinHeap(); h.push([0,from,'','',null]);
   let endKey=null;
   while(h.size){
-    const [d,u,pu,ent]=h.pop();
+    const [d,u,pu,ent,rumo]=h.pop();
     const ku=u+'|'+pu+'|'+ent;
     if((dist.get(ku)??Infinity)<d) continue;
     if(u===to){ endKey=ku; break; }
     const stIn = (pu && !pe) ? ((g.adj.get(pu)||[]).find(x=>x.to===u)||{}).st : null;
-    const cu=CL.get(u);
+    const cu=grupo(u), U=g.nodes.get(u);
     const viz = pe ? (g.adj.get(u)||[]).concat((g.radj && g.radj.get(u))||[]) : (g.adj.get(u)||[]);
     for(const e of viz){
       if(e.to===pu) continue;                        // sem meia-volta imediata
       if(!pe && BANNED_ST_TURNS.some(t=>t.via===u && stIn===t.from && e.st===t.to)) continue;
-      const cv=CL.get(e.to);
-      let pen=0, nent='';
+      const cv=grupo(e.to), V=g.nodes.get(e.to);
+      let pen=0, nent='', nrumo=rumo;
       if(cu && cv===cu){ nent=ent; }                 // andando dentro do nó composto
-      else {
-        if(cu){                                      // saindo: cobra a manobra inteira
-          pen=(ent && e.to[0]!=='L')? turnPenaltyPts(g.nodes.get(ent), CC.get(cu), g.nodes.get(e.to)) : 0;
-        } else pen=turnPenalty(g,pu||null,u,e.to);
-        if(cv) nent=u;                               // entrando: guarda de onde veio
-      }
+      else if(cv && !cu){ nent=u; }                  // entrando: o rumo de chegada fica guardado
+      else if(metros(U,V)>=1){                       // trecho de rua de verdade (ou saída do nó)
+        if(rumo && e.to[0]!=='L'){
+          pen=penalidadeRumo(g.nodes.get(rumo[0]), g.nodes.get(rumo[1]), U, V);
+          // contornar a rotatória pra voltar/virar é manobra normal (e segura): no máximo uma esquina
+          if(cu && cu.startsWith('RT')) pen=Math.min(pen,30);
+        }
+        // saindo de casa a poucos metros da esquina: o sentido inicial é livre
+        nrumo = (u===from && metros(U,V)<15) ? null : [u,e.to];
+        if(cv) nent=u;                               // saiu de um nó composto direto para outro
+      } else if(cv) nent=u;                          // ~0 m: a curva é cobrada no próximo trecho
       const nd=d+e.w+pen;
       const kv=e.to+'|'+u+'|'+nent;
       if(nd < (dist.get(kv)??Infinity)){
-        dist.set(kv,nd); prev.set(kv,ku); h.push([nd,e.to,u,nent]);
+        dist.set(kv,nd); prev.set(kv,ku); h.push([nd,e.to,u,nent,nrumo]);
       }
     }
   }
