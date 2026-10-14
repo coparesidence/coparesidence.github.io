@@ -40,7 +40,7 @@
     min-width:210px;max-width:calc(100% - 24px);animation:drop .35s cubic-bezier(.2,.9,.3,1.3)}
   .maneuver .mi{width:44px;height:44px;border-radius:14px;background:rgba(255,255,255,.18);display:grid;place-items:center;flex:none}
   .maneuver b{display:block;font-size:22px;line-height:1.05}
-  .maneuver span{font-size:13px;opacity:.92}
+  .maneuver span{display:block;font-size:13px;line-height:1.25;opacity:.92}
   @keyframes drop{from{opacity:0;transform:translate(-50%,-14px) scale(.96)}to{opacity:1;transform:translate(-50%,0)}}
   .fab{right:14px;width:48px;height:48px;border-radius:50%;border:0;background:#fff;display:grid;place-items:center;cursor:pointer}
   .toast{left:50%;transform:translateX(-50%);top:calc(84px + var(--sat));background:var(--ink);color:#fff;font-size:13px;font-weight:600;
@@ -647,6 +647,21 @@ function anguloVirada(A,B,C){
 }
 const classificar=(a)=>{ const x=Math.abs(a); if(x<35) return 'reto'; if(x<60) return a>0?'leve-esq':'leve-dir'; if(x<140) return a>0?'esq':'dir'; return 'retorno'; };
 
+// nomes das ruas (dados/nomes_ruas.json: trecho "street" → nome; OpenStreetMap + correções)
+let NOME_ST={};
+// trecho (street) da aresta a→b — inclusive andando ao contrário (modo a pé)
+function stDe(a,b){
+  const e=(G.adj.get(a)||[]).find(x=>x.to===b) || ((G.radj && G.radj.get(a))||[]).find(x=>x.to===b);
+  return e ? e.st : null;
+}
+// nome da rua por onde o caminho segue a partir do índice k (pula acessos/anel sem trecho)
+function ruaApos(ids, k){
+  for(let t=k; t+1<ids.length && t<k+12; t++){
+    const st=stDe(ids[t], ids[t+1]);
+    if(st!=null) return NOME_ST[st] || null;
+  }
+  return null;
+}
 // manobras ao longo do caminho: nó composto (rotatória/cruzamento picado) = uma manobra
 function manobras(ids, pts, cum){
   const CL=G.cluster||new Map(), CC=G.clusterCenter||new Map(), out=[];
@@ -672,12 +687,12 @@ function manobras(ids, pts, cum){
             vistas.push(a); saida++;
           }
         }
-        if(rot || tipo!=='reto') out.push({s:(cum[i]+cum[j-1])/2, ang, rot, tipo, saida});
+        if(rot || tipo!=='reto') out.push({s:(cum[i]+cum[j-1])/2, ang, rot, tipo, saida, rua:ruaApos(ids, j-1)});
       }
       i=j; continue;
     }
     const ang=anguloVirada(pts[i-1],pts[i],pts[i+1]), tipo=classificar(ang);
-    if(tipo!=='reto') out.push({s:cum[i], ang, rot:false, tipo});
+    if(tipo!=='reto') out.push({s:cum[i], ang, rot:false, tipo, rua:ruaApos(ids, i)});
     i++;
   }
   // junta viradas encostadas (<10 m) numa só — evita "vire, vire" em degrau de malha.
@@ -685,7 +700,7 @@ function manobras(ids, pts, cum){
   // a entrada no lote (a chegada já diz "lote à direita/esquerda").
   const res=[], fim=cum[cum.length-1];
   for(const m of out.filter(m=>m.s>12 && m.s<fim-12)){ const p=res[res.length-1];
-    if(p && !p.rot && !m.rot && m.s-p.s<10){ p.ang+=m.ang; p.tipo=classificar(p.ang); if(p.tipo==='reto') res.pop(); }
+    if(p && !p.rot && !m.rot && m.s-p.s<10){ p.ang+=m.ang; p.tipo=classificar(p.ang); p.rua=m.rua; if(p.tipo==='reto') res.pop(); }
     else res.push({...m});
   }
   return res;
@@ -693,11 +708,13 @@ function manobras(ids, pts, cum){
 const TXT={'esq':'Vire à esquerda','dir':'Vire à direita','leve-esq':'Mantenha à esquerda','leve-dir':'Mantenha à direita','retorno':'Faça o retorno'};
 const ORDINAL=['','primeira','segunda','terceira','quarta','quinta','sexta'];
 function textoManobra(m){
-  if(!m.rot) return TXT[m.tipo];
-  // como o Google Maps: "Na rotatória, pegue a 2ª saída"
-  if(m.saida>=1 && m.saida<ORDINAL.length) return `Na rotatória, pegue a ${ORDINAL[m.saida]} saída`;
+  // com o nome da rua quando existe: "Vire à direita na Rua Bossa Nova"
+  const na = m.rua ? ` na ${m.rua}` : '', para = m.rua ? ` para a ${m.rua}` : '';
+  if(!m.rot) return TXT[m.tipo] + (m.tipo==='retorno' ? '' : na);
+  // como o Google Maps: "Na rotatória, pegue a 2ª saída para a Avenida Atlântica"
+  if(m.saida>=1 && m.saida<ORDINAL.length) return `Na rotatória, pegue a ${ORDINAL[m.saida]} saída${para}`;
   const x=Math.abs(m.ang);
-  return 'Na rotatória, ' + (x<35?'siga em frente' : x<140 ? (m.ang>0?'saia à esquerda':'saia à direita') : 'faça o retorno');
+  return 'Na rotatória, ' + (x<35?'siga em frente' : x<140 ? (m.ang>0?'saia à esquerda':'saia à direita') : 'faça o retorno') + para;
 }
 const seta=(d,flip)=>`<svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"${flip?' style="transform:scaleX(-1)"':''}>${d}</svg>`;
 const SETA={
@@ -919,9 +936,12 @@ function atualizarNav(){
   if(GPS.ll && dentro){
     // a rota saiu da portaria porque o GPS ainda não tinha posição; a pessoa está em outro
     // lugar do loteamento (ex.: em casa) → refaz UMA vez a partir de onde ela está
-    if(!NAV.origemGPS && !NAV.ajusteFeito && GPS.acc<=65 && metros(GPS.ll, NAV.pts[0])>40){
+    // (só na 1ª leitura e só se a rota foi traçada SEM posição — senão, andando desde a
+    //  portaria, ela se refazia sozinha no meio do caminho)
+    if(!NAV.ajusteFeito){
       NAV.ajusteFeito=true;
-      if(calcularRota() && NAV.origemGPS){ vozInicio(); return atualizarNav(); }
+      if(NAV.semGPS && !NAV.origemGPS && GPS.acc<=65 && metros(GPS.ll, NAV.pts[0])>40
+         && calcularRota() && NAV.origemGPS){ vozInicio(); return atualizarNav(); }
     }
     const pr=projetarRota(GPS.ll);
     s=NAV.lastS;                       // progresso só anda pra frente (GPS tremendo não "volta" a bolinha)
@@ -962,7 +982,7 @@ function rotaPara(destNode, destLatLng, nome){
   $('err').textContent='';
   const frente=G.nodes.has('p_'+destNode) ? 'p_'+destNode : destNode;
   NAV.dest={ node:destNode, frente, ll:destLatLng, nome };
-  NAV.ajusteFeito=false; GPS.arrived=false; GPS.offCount=0;
+  NAV.ajusteFeito=false; NAV.semGPS=!GPS.ll; GPS.arrived=false; GPS.offCount=0;
   if(!calcularRota()){ NAV.dest=null; $('err').textContent='Não encontrei rota até esse destino.'; return; }
   $('dName').textContent=nome;
   $('rModo').textContent=modo().rotulo;
@@ -1068,7 +1088,7 @@ function vozInicio(){
   const min=minutos(NAV.total), prox=NAV.mans[0];
   let t=`Rota para ${comArtigo(NAV.dest.nome)}: ${distFalada(NAV.total)}, cerca de ${min} ${min>1?'minutos':'minuto'}.`;
   if(prox && prox.s<=200){ t+=` Em ${distFalada(prox.s)}, ${minusc(textoManobra(prox))}.`; prox.ditoLonge=true; }
-  else if(prox) t+=` Siga em frente por ${distFalada(prox.s)}.`;
+  else if(prox){ const r0=ruaApos(NAV.ids, 0); t+=` Siga ${r0 ? 'pela '+r0 : 'em frente'} por ${distFalada(prox.s)}.`; }
   falar(t, true);
 }
 // a cada leitura do GPS: aviso antecipado (60–200 m) e aviso na hora (≤40 m), uma vez cada
@@ -1214,6 +1234,13 @@ const ORDEM_POI=['Clube','Saída','Administração'];
   pois.forEach((p,i)=>{ p.node='POI'+i; grudarNaRua(G, p.latlng, p.node); });
   absorverAcessos(G);
   construirReverso(G);            // p/ o modo a pé (contramão liberada)
+
+  // nomes das ruas p/ instruções e voz (opcional; sem o arquivo, as instruções saem sem nome)
+  try{
+    const nr=await fetch('dados/nomes_ruas.json',{cache:'no-store'});
+    if(nr.ok){ NOME_ST=(await nr.json()).trechos||{};
+      map.attributionControl.addAttribution('Nomes © <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noopener">OpenStreetMap</a>'); }
+  }catch(e){}
 
   ALL_BOUNDS = desenharBase(data);
   // rotatórias no mapa (contorno branco discreto)
