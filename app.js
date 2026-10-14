@@ -546,7 +546,9 @@ function criarRotulos(data){
       ROTULOS.push({ly, txt});
     }
   }
-  map.on('zoomend', ajustarRotulos);
+  // 'moveend' vem depois de o SVG redesenhar os trechos na escala nova ('zoomend' vem antes:
+  // mediria o comprimento do zoom anterior e esconderia nomes que cabem)
+  map.on('moveend', ajustarRotulos);
 }
 // nome só onde cabe inteiro no trecho (e some de longe, quando vira borrão)
 function ajustarRotulos(){
