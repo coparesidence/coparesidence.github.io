@@ -1,5 +1,5 @@
 {"type":"FeatureCollection","name":"pois","features":[
-{"type":"Feature","properties":{"nome":"Clube"},"geometry":{"type":"Point","coordinates":[-37.3895803,-5.1772984]}},
+{"type":"Feature","properties":{"nome":"Clube"},"geometry":{"type":"Point","coordinates":[-37.3900232,-5.1771465]}},
 {"type":"Feature","properties":{"nome":"Saída"},"geometry":{"type":"Point","coordinates":[-37.389718,-5.177887]}},
-{"type":"Feature","properties":{"nome":"Administração"},"geometry":{"type":"Point","coordinates":[-37.3897065,-5.1780424]}}
+{"type":"Feature","properties":{"nome":"Administração"},"geometry":{"type":"Point","coordinates":[-37.3897174,-5.1779238]}}
 ]}
