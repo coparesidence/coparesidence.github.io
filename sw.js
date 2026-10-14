@@ -1,13 +1,14 @@
 // Service worker do app Copacabana Residence.
-// Arquivos do próprio site: REDE PRIMEIRO (sempre a versão mais nova) e, se o sinal
-// cair dentro do loteamento, usa a última cópia salva. Leaflet (unpkg, versão fixa):
-// cópia salva primeiro. Imagens de satélite (Esri) não passam por aqui.
-const CACHE = 'copa-v3';
+// Só cuida de arquivos do PRÓPRIO site (nada de terceiros): REDE PRIMEIRO (sempre a versão
+// mais nova) e, se o sinal cair dentro do loteamento, usa a última cópia salva. Imagens de
+// mapa/satélite (outros domínios) não passam por aqui. Só guarda respostas 200 do mesmo site.
+const CACHE = 'copa-v4';
 const BASICO = [
-  './', './index.html', './manifest.webmanifest', './icons/icon-192.png', './icons/icon-512.png',
+  './', './index.html', './app.js', './manifest.webmanifest',
+  './vendor/leaflet/leaflet.js', './vendor/leaflet/leaflet.css',
+  './icons/icon-192.png', './icons/icon-512.png',
   './dados/ruas.geojson', './dados/lotes.geojson', './dados/portaria.geojson',
   './dados/pois.geojson', './dados/rotatorias.geojson', './dados/nomes_ruas.json',
-  'https://unpkg.com/leaflet@1.9.4/dist/leaflet.css', 'https://unpkg.com/leaflet@1.9.4/dist/leaflet.js',
 ];
 
 self.addEventListener('install', (e) => {
@@ -22,16 +23,13 @@ self.addEventListener('activate', (e) => {
     .then(() => self.clients.claim()));
 });
 
-const guardar = (req, resp) => { const cp = resp.clone(); caches.open(CACHE).then((c) => c.put(req, cp)); return resp; };
-
 self.addEventListener('fetch', (e) => {
   const req = e.request;
   if (req.method !== 'GET') return;
   const url = new URL(req.url);
-  if (url.origin === self.location.origin) {
-    e.respondWith(fetch(req).then((r) => (r.ok ? guardar(req, r) : r))
-      .catch(() => caches.match(req, { ignoreSearch: true })));
-  } else if (url.hostname === 'unpkg.com') {
-    e.respondWith(caches.match(req).then((m) => m || fetch(req).then((r) => guardar(req, r))));
-  }
+  if (url.origin !== self.location.origin) return;          // terceiros: o navegador cuida
+  e.respondWith(fetch(req).then((r) => {
+    if (r.ok && r.type === 'basic') { const cp = r.clone(); caches.open(CACHE).then((c) => c.put(req, cp)); }
+    return r;
+  }).catch(() => caches.match(req, { ignoreSearch: true })));
 });

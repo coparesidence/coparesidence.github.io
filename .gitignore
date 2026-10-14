@@ -4,6 +4,8 @@
 !/.gitignore
 !/README.md
 !/index.html
+!/app.js
+!/vendor/
 !/manifest.webmanifest
 !/sw.js
 !/icons/
