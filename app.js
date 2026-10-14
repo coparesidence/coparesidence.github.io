@@ -569,7 +569,11 @@ function manobras(ids, pts, cum){
             vistas.push(a); saida++;
           }
         }
-        if(rot || tipo!=='reto') out.push({s:(cum[i]+cum[j-1])/2, ang, rot, tipo, saida, rua:ruaApos(ids, j-1)});
+        // entra e sai pelo MESMO braço (o raio de entrada e o de saída no mesmo ponto):
+        // é retorno pela rotatória — "Na rotatória, faça o retorno", não "pegue a 1ª saída"
+        let angM=ang;
+        if(rot && metros(pts[i-1],pts[j])<2){ saida=0; angM=180; }
+        if(rot || tipo!=='reto') out.push({s:(cum[i]+cum[j-1])/2, ang:angM, rot, tipo, saida, rua:ruaApos(ids, j-1)});
         i=j1; continue;
       }
       i=j; continue;
@@ -711,15 +715,42 @@ const bez=(a,b,c,d,t)=>{ const u=1-t; return [0,1].map(k=>u*u*u*a[k]+3*u*u*t*b[k
 function suavizarRotatorias(ids, pts){
   const CL=G.cluster||new Map(), CC=G.clusterCenter||new Map(), CR=G.clusterRaio||new Map();
   const out=[], mapa=[];                               // mapa[i] = índice em `out` do ponto original i
-  let i=0;
+  let i=0, ini=0;                                      // ini: não recua para antes da rotatória anterior
   while(i<ids.length){
     const c=CL.get(ids[i]);
     if(c && isRT(c) && i>0){
       let j=i; while(j<ids.length && CL.get(ids[j])===c) j++;
-      if(j<ids.length){                                // há saída: de pts[i-1] (rua de entrada) a pts[j] (rua de saída)
+      if(j<ids.length){                                // há saída: da rua de entrada à rua de saída
+        const C=CC.get(c), ilha=CR.get(c)||4, Rc=ilha+2;     // raio da ilha / da faixa de circulação (colada na ilha)
+        // pontas do desenho: NA RUA, já fora da faixa (o raio de ligação até o anel pode
+        // cair a 4 m do centro quando a rua passa de lado — começar ali dava um gancho)
+        let ib=i-1; while(ib>ini && metros(C,pts[ib])<Rc+2) ib--;
+        let jf=j;   while(jf<ids.length-1 && metros(C,pts[jf])<Rc+2) jf++;
+        out.length=mapa[ib]+1; for(let k=ib+1;k<i;k++) mapa[k]=undefined;
+        const P0=pts[ib], P3=pts[jf];
+        // rumo das ruas de entrada e de saída (trechos de pelo menos ~3 m)
+        let ia=ib; while(ia>0 && metros(pts[ia],P0)<3) ia--;
+        let jb=jf; while(jb<ids.length-1 && metros(pts[jb],P3)<3) jb++;
+        const vin=xy(P0,pts[ia]), vout=xy(pts[jb],P3), nin=Math.hypot(...vin)||1, nout=Math.hypot(...vout)||1;
+        const dIn=[vin[0]/nin, vin[1]/nin], dOut=[vout[0]/nout, vout[1]/nout];
+        // a rua só PASSA ao lado da ilha (quase reta, ilha à esquerda = sentido anti-horário)?
+        // → segue a rua, abrindo um pouco em volta da ilha. Senão, contorna pelo anel.
+        const corda=xy(P3,P0), lc=Math.hypot(...corda)||1, cC=xy(C,P0);
+        const ladoEsq=(corda[0]*cC[1]-corda[1]*cC[0])>0;
+        const reto=(dIn[0]*dOut[0]+dIn[1]*dOut[1])>0.8;
+        if(reto && ladoEsq && lc>1){
+          const L=lc*0.35, m=R*rad;
+          const ll=(P,v,s)=>[P[0]+v[1]*s/m, P[1]+v[0]*s/(m*Math.cos(P[0]*rad))];
+          const B1=ll(P0,dIn,L), B2=ll(P3,dOut,-L);
+          for(let k=1;k<16;k++){
+            let q=bez(P0,B1,B2,P3,k/16); const dq=metros(C,q), folga=ilha+1.3;
+            if(dq<folga) q=polar(C,folga,angDe(C,q));      // não passa por cima da ilha
+            out.push(q);
+          }
+          i=ini=jf; continue;
+        }
         // como o Google Maps: entra na FAIXA da rotatória pela direita (curva tangente),
         // contorna colado na ilha no sentido anti-horário e sai pela direita na rua de saída
-        const C=CC.get(c), P0=pts[i-1], P3=pts[j], Rc=(CR.get(c)||4)+3.5;   // raio da faixa de circulação
         const a0=angDe(C,P0), a1=angDe(C,P3);
         let d=a1-a0; while(d<=0.05) d+=2*Math.PI;            // do braço de entrada ao de saída, anti-horário
         const dl=Math.min(0.3, d/4);                         // entra/sai ~17° à direita do eixo da rua
@@ -727,16 +758,16 @@ function suavizarRotatorias(ids, pts){
         const E=polar(C,Rc,ae), X=polar(C,Rc,ax);
         // entrada: da rua até a faixa (tangente ao círculo)
         const k0=Math.max(Rc+1, Math.min(metros(C,P0), Rc+6));
-        const e1=polar(C,k0,a0), e2=offset(E,3,ae-Math.PI/2);
+        const e1=polar(C,k0,a0), e2=offset(E,2,ae-Math.PI/2);
         for(let k=1;k<=8;k++) out.push(bez(P0,e1,e2,E,k/8));
         // contorno: arco anti-horário pela faixa
         const passos=Math.max(2, Math.ceil((ax-ae)/(Math.PI/18)));
         for(let k=1;k<passos;k++) out.push(polar(C,Rc,ae+(ax-ae)*k/passos));
         // saída: da faixa até a rua de saída
         const k3=Math.max(Rc+1, Math.min(metros(C,P3), Rc+6));
-        const x1=offset(X,3,ax+Math.PI/2), x2=polar(C,k3,a1);
+        const x1=offset(X,2,ax+Math.PI/2), x2=polar(C,k3,a1);
         for(let k=0;k<8;k++) out.push(bez(X,x1,x2,P3,k/8));
-        i=j; continue;
+        i=ini=jf; continue;
       }
     }
     mapa[i]=out.length; out.push(pts[i]); i++;
