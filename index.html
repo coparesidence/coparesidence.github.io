@@ -43,6 +43,8 @@
   .maneuver span{display:block;font-size:13px;line-height:1.25;opacity:.92}
   @keyframes drop{from{opacity:0;transform:translate(-50%,-14px) scale(.96)}to{opacity:1;transform:translate(-50%,0)}}
   .fab{right:14px;width:48px;height:48px;border-radius:50%;border:0;background:#fff;display:grid;place-items:center;cursor:pointer}
+  .fundo{position:absolute;z-index:1000;right:14px;display:flex;align-items:center;gap:6px;border:0;border-radius:999px;cursor:pointer;
+    background:rgba(255,255,255,.96);padding:9px 13px;font:600 13px/1 inherit;font-family:inherit;color:var(--ink);box-shadow:0 8px 28px rgba(15,23,42,.22)}
   .toast{left:50%;transform:translateX(-50%);top:calc(84px + var(--sat));background:var(--ink);color:#fff;font-size:13px;font-weight:600;
     padding:8px 14px;border-radius:999px;opacity:0;transition:opacity .25s;pointer-events:none}
   .toast.show{opacity:1}
@@ -132,6 +134,7 @@
   <div><b id="manDist">—</b><span id="manTxt">—</span></div>
 </div>
 <div class="toast" id="toast"></div>
+<button class="fundo press" id="fundo" aria-label="Mostrar mapa de ruas"></button>
 <button class="fab press" id="recenter" hidden aria-label="Centralizar em mim">
   <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#2563eb" stroke-width="2.4" stroke-linecap="round"><circle cx="12" cy="12" r="4"/><path d="M12 2v3M12 19v3M2 12h3M19 12h3"/></svg>
 </button>
@@ -254,7 +257,7 @@ function buildGraph(lines){
 // Cada rua que chega na rotatória é reconectada ao anel; remove o cruzamento reto
 // pelo centro, forçando a rota a contornar (retornos/conversões passam pela rotatória).
 function injectRotatorias(g, rots){
-  const skip=(k)=> typeof k==='string' && (k[0]==='L'||k==='PORTARIA'||k.startsWith('p_')||k.startsWith('POI')||k.startsWith('RT'));
+  const skip=(k)=> typeof k==='string' && (k[0]==='L'||k==='PORTARIA'||k.startsWith('p_')||k.startsWith('POI')||k.startsWith('RT')||k.startsWith('RA'));
   // grau não-direcionado de cada nó (cruzamento = grau ≥ 3)
   const deg=new Map();
   for(const e of g.edges){ if(!e) continue; deg.set(e[0],(deg.get(e[0])||0)+1); deg.set(e[1],(deg.get(e[1])||0)+1); }
@@ -280,7 +283,7 @@ function injectRotatorias(g, rots){
       const ang=Math.atan2(oll[0]-C[0], (oll[1]-C[1])*cos0);  // ângulo do braço
       const into  = centerIsB ? ow>=0 : ow<=0;           // fluxo ENTRA na rotatória?
       const outof = centerIsB ? ow<=0 : ow>=0;           // fluxo SAI da rotatória?
-      arms.push({out,ang,into,outof,st});
+      arms.push({out,ang,into,outof,st, jll:g.nodes.get(centerIsB?b:a).slice()});   // jll = cruzamento original da rua
     }
     if(arms.length<3){ continue; }                        // precisa ser junção real
     arms.sort((x,y)=>x.ang-y.ang);
@@ -311,12 +314,23 @@ function injectRotatorias(g, rots){
       g.adj.get(A.id).push({to:B.id,w,st:null});
       g.edges.push([A.id,B.id,1,null]);
     }
-    // 4) conecta cada braço ao seu ponto do anel, respeitando mão única
+    // 4) conecta cada braço ao anel, respeitando mão única. A rua segue pelo traçado
+    //    dela até o CRUZAMENTO ORIGINAL (nó 'RA…' próprio de cada braço) e só dali faz a
+    //    ligação curta até o anel — ligar direto o próximo ponto da rua ao anel deixava a
+    //    linha torta, cortando o quarteirão, quando esse ponto ficava longe (rua de 150 m).
+    //    O ponto de ligação é o ponto DA RUA (trecho cruzamento→próximo ponto) mais perto do
+    //    centro da ilha: fica sempre em cima do asfalto e não faz "gancho" quando o cruzamento
+    //    original fica depois da rotatória (rua que passa do lado da ilha, ex. lotes 444–448).
     pts.forEach(p=>{ if(p.arm==null) return;
-      const arm=arms[p.arm], w=metros(g.nodes.get(arm.out),p.ll);
-      if(arm.into)  g.adj.get(arm.out).push({to:p.id,w,st:arm.st});   // entra no anel
-      if(arm.outof) g.adj.get(p.id).push({to:arm.out,w,st:arm.st});   // sai do anel
-      g.edges.push([arm.out,p.id, (arm.into&&arm.outof)?0:(arm.into?1:-1), arm.st]);
+      const arm=arms[p.arm], A='RA'+p.id.slice(2);
+      const lig=projetarNoSegmento(C, arm.jll, g.nodes.get(arm.out)).latlng;
+      g.nodes.set(A, lig); g.adj.set(A, []);
+      const w1=metros(g.nodes.get(arm.out),lig), w2=metros(lig,p.ll);
+      const ow=(arm.into&&arm.outof)?0:(arm.into?1:-1);
+      if(arm.into){  g.adj.get(arm.out).push({to:A,w:w1,st:arm.st}); g.adj.get(A).push({to:p.id,w:w2,st:arm.st}); }   // entra
+      if(arm.outof){ g.adj.get(p.id).push({to:A,w:w2,st:arm.st});    g.adj.get(A).push({to:arm.out,w:w1,st:arm.st}); } // sai
+      g.edges.push([arm.out, A, ow, arm.st]);
+      g.edges.push([A, p.id, ow, arm.st]);
     });
     // 5) remove o miolo: isola nós centrais (sem cruzar reto) e some arestas antigas
     for(const k of cset) g.adj.set(k,[]);
@@ -585,8 +599,36 @@ function gerarExemplo(){
 const $=(id)=>document.getElementById(id);
 const map = L.map('map', { zoomControl:false, attributionControl:true, maxZoom:19 });
 map.attributionControl.setPosition('topright');
-L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}',
-  { maxZoom:19, maxNativeZoom:18, attribution:'Imagery © Esri' }).addTo(map);
+// fundo: SATÉLITE (Esri) ou MAPA de ruas (OpenStreetMap — tem as ruas internas com nome).
+// (CARTO passou a exigir chave de API; o mapa de ruas da Esri vem vazio nesta região.)
+const FUNDOS={
+  satelite: L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}',
+    { maxZoom:19, maxNativeZoom:18, attribution:'Imagery © Esri' }),
+  mapa: L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png',
+    { maxZoom:19, maxNativeZoom:19,
+      attribution:'© <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noopener">OpenStreetMap</a>' }),
+};
+let FUNDO='satelite';
+try{ const f=localStorage.getItem('copa.fundo'); if(FUNDOS[f]) FUNDO=f; }catch(e){}
+FUNDOS[FUNDO].addTo(map);
+const RUAS_LY=[], ROT_LY=[];      // traços das ruas e círculos das rotatórias (mudam de estilo com o fundo)
+// no satélite a foto já mostra a rua → traço fino; no mapa as ruas internas podem não
+// existir no mapa base → desenha as nossas como rua de verdade (cinza com borda)
+const estiloRua=()=> FUNDO==='mapa' ? {color:'#ffffff',weight:7,opacity:1} : {color:'#ffffff',weight:2,opacity:.35};
+const estiloBorda=()=> FUNDO==='mapa' ? {color:'#c3ccd6',weight:10,opacity:1} : {opacity:0};
+const estiloRot=()=> FUNDO==='mapa' ? {color:'#94a3b8',weight:2,opacity:1,fillColor:'#cbd5e1',fillOpacity:.6} : {color:'#ffffff',weight:2,opacity:.8,fillColor:'#ffffff',fillOpacity:.15};
+function setFundo(f){
+  if(!FUNDOS[f]) return;
+  if(f!==FUNDO){ map.removeLayer(FUNDOS[FUNDO]); FUNDO=f; FUNDOS[f].addTo(map); FUNDOS[f].bringToBack(); }
+  try{ localStorage.setItem('copa.fundo', f); }catch(e){}
+  for(const r of RUAS_LY){ r.borda.setStyle(estiloBorda()); r.linha.setStyle(estiloRua()); }
+  for(const c of ROT_LY) c.setStyle(estiloRot());
+  const b=$('fundo'); if(b){ const outro=f==='satelite'?'mapa':'satelite';
+    b.innerHTML=(outro==='mapa'?ICON_MAPA:ICON_SAT)+`<span>${outro==='mapa'?'Mapa':'Satélite'}</span>`;
+    b.setAttribute('aria-label', outro==='mapa'?'Mostrar mapa de ruas':'Mostrar satélite'); }
+}
+const ICON_MAPA='<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#0f172a" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 4L3 6v14l6-2 6 2 6-2V4l-6 2z"/><path d="M9 4v14M15 6v14"/></svg>';
+const ICON_SAT='<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#0f172a" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2l9 5-9 5-9-5z"/><path d="M3 12l9 5 9-5M3 17l9 5 9-5"/></svg>';
 map.setView([-5.1787,-37.3898], 16);
 const canvas = L.canvas({ padding:0.5 });
 
@@ -605,11 +647,14 @@ async function carregarDados(){
 }
 
 function desenharBase(data){
-  // ruas: traço branco discreto (a imagem de satélite já mostra a rua)
-  for(const line of data.lines){
-    const path=line.path||line;
-    L.polyline(path, {color:'#ffffff', weight:2, opacity:.35, renderer:canvas, interactive:false}).addTo(map);
-  }
+  // ruas: no satélite, traço branco discreto; no mapa, rua desenhada (ver estiloRua).
+  // Primeiro TODAS as bordas, depois todas as ruas — senão a borda de uma rua passa por
+  // cima da outra nos cruzamentos.
+  const bordas=data.lines.map(line=>L.polyline(line.path||line, Object.assign({renderer:canvas, interactive:false, lineCap:'round'}, estiloBorda())).addTo(map));
+  data.lines.forEach((line,i)=>{
+    const linha=L.polyline(line.path||line, Object.assign({renderer:canvas, interactive:false, lineCap:'round'}, estiloRua())).addTo(map);
+    RUAS_LY.push({borda:bordas[i], linha});
+  });
   // lotes: não são desenhados (pedido do André — poluíam o mapa); só definem o enquadramento
   const bounds=L.latLngBounds([]);
   for(const lot of data.lots) bounds.extend(lot.latlng);
@@ -623,7 +668,12 @@ function desenharBase(data){
 // enquadra deixando espaço pro painel de baixo e pra pílula de cima
 const padOpts=()=>({ paddingTopLeft:[24,86], paddingBottomRight:[24,$('sheet').offsetHeight+16] });
 function fitAll(){ map.invalidateSize(); if(ALL_BOUNDS && ALL_BOUNDS.isValid()) map.fitBounds(ALL_BOUNDS, padOpts()); }
-function posFab(){ $('recenter').style.bottom=($('sheet').offsetHeight+14)+'px'; }
+// botões flutuantes acima do painel: "centralizar" e, acima dele, "Satélite/Mapa"
+function posFab(){
+  const base=$('sheet').offsetHeight+14;
+  $('recenter').style.bottom=base+'px';
+  $('fundo').style.bottom=(base+($('recenter').hidden?0:60))+'px';
+}
 function estado(s){
   for(const id of ['stChoose','stNav','stArr']) $(id).hidden=(id!==s);
   $('man').hidden=(s!=='stNav'); $('brand').hidden=(s==='stNav');
@@ -1242,7 +1292,7 @@ const ORDEM_POI=['Clube','Saída','Administração','Smart Bodega'];
   ALL_BOUNDS = desenharBase(data);
   // rotatórias no mapa (contorno branco discreto)
   (window.ROTATORIAS||[]).forEach(rt=>{
-    L.circle([rt.lat,rt.lng],{radius:(rt.raio||6),color:'#ffffff',weight:2,opacity:.8,fillColor:'#ffffff',fillOpacity:.15,interactive:false}).addTo(map);
+    ROT_LY.push(L.circle([rt.lat,rt.lng],Object.assign({radius:(rt.raio||6),interactive:false}, estiloRot())).addTo(map));
   });
   // destinos fixos: só Clube, Saída e Administração (nessa ordem)
   pois.sort((a,b)=>(ORDEM_POI.indexOf(a.nome)+99)%99-(ORDEM_POI.indexOf(b.nome)+99)%99);
@@ -1268,12 +1318,14 @@ const ORDEM_POI=['Clube','Saída','Administração','Smart Bodega'];
   // eventos
   $('fLote').addEventListener('submit',traçar);
   $('cancel').onclick=encerrar;
+  setFundo(FUNDO);
+  $('fundo').onclick=()=>setFundo(FUNDO==='satelite'?'mapa':'satelite');
   setModo(MODO);
   document.querySelectorAll('#modos .modo').forEach(b=> b.onclick=()=>setModo(b.dataset.modo));
   setSom(VOZ.ligada);
   $('som').onclick=()=>{ setSom(!VOZ.ligada); if(VOZ.ligada) falar('Voz ligada.', true); };
   $('again').onclick=encerrar;
-  $('recenter').onclick=()=>{ GPS.follow=true; $('recenter').hidden=true; if(GPS.ll) centrarEm(GPS.ll, Math.max(map.getZoom(),18)); };
+  $('recenter').onclick=()=>{ GPS.follow=true; $('recenter').hidden=true; posFab(); if(GPS.ll) centrarEm(GPS.vis||GPS.ll, Math.max(map.getZoom(),18)); };
   map.on('dragstart',()=>{ if(NAV.dest && !GPS.arrived){ GPS.follow=false; $('recenter').hidden=false; posFab(); } });
 
   // se a pessoa já deu permissão de localização antes, a bolinha aparece sem perguntar de novo
