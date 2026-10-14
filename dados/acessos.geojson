@@ -1,0 +1,5 @@
+{"type":"FeatureCollection","name":"acessos","_nota":"só desenho (modo Mapa): pistas da portaria até a avenida e o trecho da Av. Gov. Tarcísio Maia em frente ao condomínio; NÃO entram nas rotas. Traçado sobre o satélite Esri.","features":[
+{"type":"Feature","properties":{"tipo":"acesso","nome":"Entrada"},"geometry":{"type":"LineString","coordinates":[[-37.389732,-5.177753],[-37.3896316,-5.1777089],[-37.3891654,-5.17768]]}},
+{"type":"Feature","properties":{"tipo":"acesso","nome":"Saída"},"geometry":{"type":"LineString","coordinates":[[-37.389704,-5.177873],[-37.3896316,-5.1778294],[-37.389296,-5.1778366]]}},
+{"type":"Feature","properties":{"tipo":"avenida","nome":"Avenida Governador Tarcísio Maia"},"geometry":{"type":"LineString","coordinates":[[-37.3906036,-5.1794048],[-37.3882985,-5.1766404]]}}
+]}

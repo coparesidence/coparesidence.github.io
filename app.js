@@ -424,14 +424,14 @@ function gerarExemplo(){
 const $=(id)=>document.getElementById(id);
 const map = L.map('map', { zoomControl:false, attributionControl:true, maxZoom:19 });
 map.attributionControl.setPosition('topright');
-// fundo: SATÉLITE (Esri) ou MAPA de ruas (OpenStreetMap — tem as ruas internas com nome).
-// (CARTO passou a exigir chave de API; o mapa de ruas da Esri vem vazio nesta região.)
+// fundo: SATÉLITE (Esri) ou MAPA próprio. O app é só pra dentro do condomínio: o "mapa" não
+// usa fundo de terceiros (o OpenStreetMap tinha as ruas daqui deslocadas → rua sobre rua);
+// é um fundo liso com as nossas ruas, as pistas da portaria e a Av. Gov. Tarcísio Maia.
+const COR_FUNDO_MAPA='#f2efe9';
 const FUNDOS={
   satelite: L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}',
     { maxZoom:19, maxNativeZoom:18, attribution:'Imagery © Esri' }),
-  mapa: L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png',
-    { maxZoom:19, maxNativeZoom:19,
-      attribution:'© <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noopener">OpenStreetMap</a>' }),
+  mapa: L.layerGroup(),
 };
 let FUNDO='satelite';
 try{ const f=localStorage.getItem('copa.fundo'); if(FUNDOS[f]) FUNDO=f; }catch(e){}
@@ -439,16 +439,19 @@ FUNDOS[FUNDO].addTo(map);
 const RUAS_LY=[], ROT_LY=[];      // traços das ruas e círculos das rotatórias (mudam de estilo com o fundo)
 // no satélite a foto já mostra a rua → traço fino; no mapa as ruas internas podem não
 // existir no mapa base → desenha as nossas como rua de verdade (cinza com borda)
-const estiloRua=()=> FUNDO==='mapa' ? {color:'#ffffff',weight:7,opacity:1} : {color:'#ffffff',weight:2,opacity:.35};
-const estiloBorda=()=> FUNDO==='mapa' ? {color:'#c3ccd6',weight:10,opacity:1} : {opacity:0};
+// (a avenida só aparece no mapa — no satélite a foto já mostra)
+const estiloRua=(tipo)=> FUNDO==='mapa' ? {color:'#ffffff',weight:tipo==='avenida'?13:7,opacity:1}
+                       : (tipo==='avenida' ? {opacity:0} : {color:'#ffffff',weight:2,opacity:.35});
+const estiloBorda=(tipo)=> FUNDO==='mapa' ? {color:'#c3ccd6',weight:tipo==='avenida'?17:10,opacity:1} : {opacity:0};
 const estiloRot=()=> FUNDO==='mapa' ? {color:'#94a3b8',weight:2,opacity:1,fillColor:'#cbd5e1',fillOpacity:.6} : {color:'#ffffff',weight:2,opacity:.8,fillColor:'#ffffff',fillOpacity:.15};
 function setFundo(f){
   if(!FUNDOS[f]) return;
-  if(f!==FUNDO){ map.removeLayer(FUNDOS[FUNDO]); FUNDO=f; FUNDOS[f].addTo(map); FUNDOS[f].bringToBack(); }
+  if(f!==FUNDO){ map.removeLayer(FUNDOS[FUNDO]); FUNDO=f; FUNDOS[f].addTo(map); if(FUNDOS[f].bringToBack) FUNDOS[f].bringToBack(); }
+  map.getContainer().style.background = f==='mapa' ? COR_FUNDO_MAPA : '';
   try{ localStorage.setItem('copa.fundo', f); }catch(e){}
-  for(const r of RUAS_LY){ r.borda.setStyle(estiloBorda()); r.linha.setStyle(estiloRua()); }
+  for(const r of RUAS_LY){ r.borda.setStyle(estiloBorda(r.tipo)); r.linha.setStyle(estiloRua(r.tipo)); }
   for(const c of ROT_LY) c.setStyle(estiloRot());
-  if(MASCARA) aplicarFundoExtras();
+  if(ROTULOS.length) aplicarFundoExtras();
   const b=$('fundo'); if(b){ const outro=f==='satelite'?'mapa':'satelite';
     b.innerHTML=(outro==='mapa'?ICON_MAPA:ICON_SAT)+`<span>${outro==='mapa'?'Mapa':'Satélite'}</span>`;
     b.setAttribute('aria-label', outro==='mapa'?'Mostrar mapa de ruas':'Mostrar satélite'); }
@@ -457,7 +460,7 @@ const ICON_MAPA='<svg width="18" height="18" viewBox="0 0 24 24" fill="none" str
 const ICON_SAT='<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#0f172a" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2l9 5-9 5-9-5z"/><path d="M3 12l9 5 9-5M3 17l9 5 9-5"/></svg>';
 map.setView([-5.1787,-37.3898], 16);
 // camadas, de baixo pra cima: fundo · máscara (só no mapa) · nossas ruas · nomes · rota/marcadores
-for(const [nome,z] of [['mascara',250],['ruas',350],['rotulos',380]]){ const p=map.createPane(nome); p.style.zIndex=z; p.style.pointerEvents='none'; }
+for(const [nome,z] of [['ruas',350],['rotulos',380]]){ const p=map.createPane(nome); p.style.zIndex=z; p.style.pointerEvents='none'; }
 const canvas = L.canvas({ padding:0.5 });
 const canvasRuas = L.canvas({ padding:0.5, pane:'ruas' });
 const svgRotulos = L.svg({ padding:0.5, pane:'rotulos' });
@@ -480,12 +483,13 @@ function desenharBase(data){
   // ruas: no satélite, traço branco discreto; no mapa, rua desenhada (ver estiloRua).
   // Primeiro TODAS as bordas, depois todas as ruas — senão a borda de uma rua passa por
   // cima da outra nos cruzamentos.
-  const bordas=data.lines.map(line=>L.polyline(line.path||line, Object.assign({renderer:canvasRuas, pane:'ruas', interactive:false, lineCap:'round'}, estiloBorda())).addTo(map));
-  data.lines.forEach((line,i)=>{
-    const linha=L.polyline(line.path||line, Object.assign({renderer:canvasRuas, pane:'ruas', interactive:false, lineCap:'round'}, estiloRua())).addTo(map);
-    RUAS_LY.push({borda:bordas[i], linha});
+  // + `data.extras`: só desenho, fora das rotas (pistas da portaria e a avenida — dados/acessos.geojson)
+  const todas=data.lines.concat(data.extras||[]);
+  const bordas=todas.map(line=>L.polyline(line.path||line, Object.assign({renderer:canvasRuas, pane:'ruas', interactive:false, lineCap:'round'}, estiloBorda(line.tipo))).addTo(map));
+  todas.forEach((line,i)=>{
+    const linha=L.polyline(line.path||line, Object.assign({renderer:canvasRuas, pane:'ruas', interactive:false, lineCap:'round'}, estiloRua(line.tipo))).addTo(map);
+    RUAS_LY.push({borda:bordas[i], linha, tipo:line.tipo});
   });
-  MASCARA=criarMascara(data);
   criarRotulos(data);
   aplicarFundoExtras();
   // lotes: não são desenhados (poluíam o mapa); só definem o enquadramento
@@ -496,29 +500,12 @@ function desenharBase(data){
     .addTo(map).bindTooltip(esc(data.portariaNome),{direction:'top'});
   return bounds.pad(0.15);
 }
-// MAPA: o fundo do OpenStreetMap traz as ruas internas do jeito dele, nem sempre no mesmo
-// lugar das nossas (que são as que a rota segue) → "rua sobre rua". Dentro do loteamento a
-// máscara cobre o fundo com a cor de quadra (em volta das nossas ruas e dos lotes) e os
-// nomes passam a ser os nossos (os mesmos da voz). Fora do muro o mapa continua igual.
-let MASCARA=null; const ROTULOS=[];
-const COR_QUADRA='#e0dfdf';
-function criarMascara(data){
-  const ccw=(r)=>{ let a=0; for(let k=0;k<r.length;k++){ const p=r[k], q=r[(k+1)%r.length]; a+=(p[1]*q[0]-q[1]*p[0]); } return a>0 ? r : r.reverse(); };   // todos no mesmo sentido → "nonzero" une tudo
-  const disco=(C,m,n)=>{ const r=[]; for(let k=0;k<n;k++) r.push(offset(C,m,2*Math.PI*k/n)); return ccw(r); };
-  const W=11, polys=[];                                 // meia-largura: rua + calçada
-  for(const line of data.lines){ const p=line.path||line;
-    for(let k=0;k+1<p.length;k++){ const A=p[k], B=p[k+1]; if(metros(A,B)<0.5) continue;
-      const n=angDe(A,B)+Math.PI/2;
-      polys.push([ccw([offset(A,W,n), offset(B,W,n), offset(B,W,n+Math.PI), offset(A,W,n+Math.PI)])]); }
-    for(const P of p) polys.push([disco(P,W,10)]); }
-  for(const lot of data.lots) polys.push([disco(lot.latlng,14,12)]);
-  return L.polygon(polys, { renderer:L.canvas({padding:0.5, pane:'mascara'}), pane:'mascara', stroke:false,
-    fillColor:COR_QUADRA, fillOpacity:1, fillRule:'nonzero', interactive:false }).addTo(map);
-}
+// MAPA: nomes das ruas escritos ao longo das nossas ruas (os mesmos da voz)
+const ROTULOS=[];
 function criarRotulos(data){
   // junta os trechos de mesmo nome que se encostam numa linha só (um rótulo por rua)
   const chave=(P)=>P[0].toFixed(6)+','+P[1].toFixed(6), porNome=new Map();
-  for(const line of data.lines){ const nome=line.st!=null && NOME_ST[line.st]; if(!nome) continue;
+  for(const line of data.lines.concat(data.extras||[])){ const nome=line.rotulo || (line.st!=null && NOME_ST[line.st]); if(!nome) continue;
     (porNome.get(nome)||porNome.set(nome,[]).get(nome)).push((line.path||line).slice()); }
   const SVGNS='http://www.w3.org/2000/svg'; let n=0;
   for(const [nome,trechos] of porNome){
@@ -560,7 +547,7 @@ function ajustarRotulos(){
 }
 function aplicarFundoExtras(){
   const mapa=FUNDO==='mapa';
-  for(const p of ['mascara','rotulos']) map.getPane(p).style.display = mapa ? '' : 'none';
+  map.getPane('rotulos').style.display = mapa ? '' : 'none';
   if(mapa) ajustarRotulos();
 }
 
@@ -1307,6 +1294,15 @@ const ORDEM_POI=['Clube','Saída','Administração','Smart Bodega'];
     const nr=await fetch('dados/nomes_ruas.json',{cache:'no-store'});
     if(nr.ok){ NOME_ST=(await nr.json()).trechos||{};
       map.attributionControl.addAttribution('Nomes © <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noopener">OpenStreetMap</a>'); }
+  }catch(e){}
+
+  // pistas da portaria e a avenida em frente (só desenho, não entram nas rotas)
+  try{
+    const ar=await fetch('dados/acessos.geojson',{cache:'no-store'});
+    if(ar.ok) data.extras=((await ar.json()).features||[]).filter(f=>f.geometry && f.geometry.type==='LineString').map(f=>{
+      const pr=f.properties||{};
+      return { path:f.geometry.coordinates.map(c=>[c[1],c[0]]), tipo:pr.tipo==='avenida'?'avenida':'acesso',
+               rotulo: pr.tipo==='avenida' && typeof pr.nome==='string' ? pr.nome : null }; });
   }catch(e){}
 
   ALL_BOUNDS = desenharBase(data);

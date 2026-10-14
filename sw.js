@@ -2,13 +2,13 @@
 // Só cuida de arquivos do PRÓPRIO site (nada de terceiros): REDE PRIMEIRO (sempre a versão
 // mais nova) e, se o sinal cair dentro do loteamento, usa a última cópia salva. Imagens de
 // mapa/satélite (outros domínios) não passam por aqui. Só guarda respostas 200 do mesmo site.
-const CACHE = 'copa-v8';
+const CACHE = 'copa-v9';
 const BASICO = [
   './', './index.html', './app.js', './manifest.webmanifest',
   './vendor/leaflet/leaflet.js', './vendor/leaflet/leaflet.css',
   './icons/icon-192.png', './icons/icon-512.png',
   './dados/ruas.geojson', './dados/lotes.geojson', './dados/portaria.geojson',
-  './dados/pois.geojson', './dados/rotatorias.geojson', './dados/nomes_ruas.json',
+  './dados/pois.geojson', './dados/rotatorias.geojson', './dados/nomes_ruas.json', './dados/acessos.geojson',
 ];
 
 self.addEventListener('install', (e) => {

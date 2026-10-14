@@ -19,5 +19,6 @@
 !/dados/pois.geojson
 !/dados/rotatorias.geojson
 !/dados/nomes_ruas.json
+!/dados/acessos.geojson
 
 .DS_Store
