@@ -722,7 +722,7 @@ function setModo(m){
 // fazer meia-volta no meio da rua). O nó é removido depois do cálculo.
 function rotaDoPonto(ll, heading, destino){
   const best=escolherAcesso(G, ll, null, null);
-  if(!best || best.dist>35) return null;
+  if(!best || best.dist>60) return null;
   const id='p_GPS', A=G.nodes.get(best.a), B=G.nodes.get(best.b);
   G.nodes.set(id, best.latlng); G.adj.set(id, []);
   const add=(to)=>G.adj.get(id).push({to, w:metros(best.latlng,G.nodes.get(to)), st:best.st});
@@ -740,13 +740,27 @@ function rotaDoPonto(ll, heading, destino){
   return r;
 }
 
+// a pessoa está DENTRO de um lote (em casa) e não na rua? → devolve esse lote
+function loteDeOnde(ll){
+  const rua=escolherAcesso(G, ll, null, null);
+  if(rua && rua.dist<7) return null;                 // já está na rua
+  let best=null, bd=20;
+  for(const lot of LOTS_BY_ID.values()){ const d=metros(ll, lot.latlng); if(d<bd){ bd=d; best=lot; } }
+  return (best && G.nodes.has('p_L'+best.id)) ? best : null;
+}
 function calcularRota(){
   let r=null, deGPS=false;
-  if(GPS.ll && dentroDoLoteamento(GPS.ll) && GPS.acc<=40){ r=rotaDoPonto(GPS.ll, GPS.heading, NAV.dest.frente); deGPS=!!r; }
-  if(!r){ r=dijkstra(G, PORT_NODE, NAV.dest.frente, {pe:modo().pe}); if(r) r.coords=r.path.map(n=>G.nodes.get(n)); }
+  const pe=modo().pe;
+  if(GPS.ll && dentroDoLoteamento(GPS.ll) && GPS.acc<=65){
+    // em casa: a rota começa LÁ FORA, na rua em frente ao lote (mesmo ponto de chegada dele)
+    const casa=loteDeOnde(GPS.ll);
+    if(casa){ r=dijkstra(G, 'p_L'+casa.id, NAV.dest.frente, {pe}); if(r){ r.coords=r.path.map(n=>G.nodes.get(n)); deGPS=true; } }
+    if(!r){ r=rotaDoPonto(GPS.ll, GPS.heading, NAV.dest.frente); deGPS=!!r; }
+  }
+  if(!r){ r=dijkstra(G, PORT_NODE, NAV.dest.frente, {pe}); if(r) r.coords=r.path.map(n=>G.nodes.get(n)); }
   if(!r) return null;
-  const ids=deGPS ? ['GPS'].concat(r.path) : r.path;
-  const pts=deGPS ? [GPS.ll].concat(r.coords) : r.coords;
+  // a linha começa NA RUA — não liga mais a posição do GPS (dentro de casa) à rota
+  const ids=r.path, pts=r.coords;
   const cum=[0]; for(let i=1;i<pts.length;i++) cum.push(cum[i-1]+metros(pts[i-1],pts[i]));
   Object.assign(NAV,{ ids, pts, cum, total:cum[cum.length-1], lastS:0, origemGPS:deGPS, ditoFinal:false });
   NAV.mans=manobras(ids, pts, cum);
@@ -821,13 +835,21 @@ function atualizarNav(){
   const dentro=dentroDoLoteamento(GPS.ll), M=modo();
   GPS.vis=null;
   if(GPS.ll && dentro){
+    // a rota saiu da portaria porque o GPS ainda não tinha posição; a pessoa está em outro
+    // lugar do loteamento (ex.: em casa) → refaz UMA vez a partir de onde ela está
+    if(!NAV.origemGPS && !NAV.ajusteFeito && GPS.acc<=65 && metros(GPS.ll, NAV.pts[0])>40){
+      NAV.ajusteFeito=true;
+      if(calcularRota() && NAV.origemGPS){ vozInicio(); return atualizarNav(); }
+    }
     const pr=projetarRota(GPS.ll);
     s=NAV.lastS;                       // progresso só anda pra frente (GPS tremendo não "volta" a bolinha)
     // perto da linha → a bolinha fica GRUDADA na rota (posição e rumo da própria rua)
     const lim=Math.max(M.lim, Math.min(GPS.acc, 45));
     if(pr.d<=lim){ const pe=pontoEm(s); GPS.vis=pe.ll; GPS.visHd=rumoEm(pe.i); }
+    // ainda saindo de casa até a rua (perto do começo da rota): não é "fora da rota"
+    const saindoDeCasa = NAV.origemGPS && NAV.lastS<10 && metros(GPS.ll, NAV.pts[0])<60;
     // saiu da rota? (N leituras seguidas longe da linha, GPS razoável) → recalcula
-    GPS.offCount = (pr.d>lim && GPS.acc<=50) ? GPS.offCount+1 : 0;
+    GPS.offCount = (pr.d>lim && GPS.acc<=50 && !saindoDeCasa) ? GPS.offCount+1 : 0;
     if(GPS.offCount>=M.leituras && Date.now()-GPS.lastRecalc>M.intervalo){
       GPS.lastRecalc=Date.now(); GPS.offCount=0;
       if(calcularRota()){ toast('Rota recalculada'); falar('Rota recalculada.', true); return atualizarNav(); }
@@ -858,7 +880,7 @@ function rotaPara(destNode, destLatLng, nome){
   $('err').textContent='';
   const frente=G.nodes.has('p_'+destNode) ? 'p_'+destNode : destNode;
   NAV.dest={ node:destNode, frente, ll:destLatLng, nome };
-  GPS.arrived=false; GPS.offCount=0;
+  NAV.ajusteFeito=false; GPS.arrived=false; GPS.offCount=0;
   if(!calcularRota()){ NAV.dest=null; $('err').textContent='Não encontrei rota até esse destino.'; return; }
   $('dName').textContent=nome;
   $('rModo').textContent=modo().rotulo;
