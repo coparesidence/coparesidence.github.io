@@ -448,6 +448,7 @@ function setFundo(f){
   try{ localStorage.setItem('copa.fundo', f); }catch(e){}
   for(const r of RUAS_LY){ r.borda.setStyle(estiloBorda()); r.linha.setStyle(estiloRua()); }
   for(const c of ROT_LY) c.setStyle(estiloRot());
+  if(MASCARA) aplicarFundoExtras();
   const b=$('fundo'); if(b){ const outro=f==='satelite'?'mapa':'satelite';
     b.innerHTML=(outro==='mapa'?ICON_MAPA:ICON_SAT)+`<span>${outro==='mapa'?'Mapa':'Satélite'}</span>`;
     b.setAttribute('aria-label', outro==='mapa'?'Mostrar mapa de ruas':'Mostrar satélite'); }
@@ -455,7 +456,11 @@ function setFundo(f){
 const ICON_MAPA='<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#0f172a" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 4L3 6v14l6-2 6 2 6-2V4l-6 2z"/><path d="M9 4v14M15 6v14"/></svg>';
 const ICON_SAT='<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#0f172a" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2l9 5-9 5-9-5z"/><path d="M3 12l9 5 9-5M3 17l9 5 9-5"/></svg>';
 map.setView([-5.1787,-37.3898], 16);
+// camadas, de baixo pra cima: fundo · máscara (só no mapa) · nossas ruas · nomes · rota/marcadores
+for(const [nome,z] of [['mascara',250],['ruas',350],['rotulos',380]]){ const p=map.createPane(nome); p.style.zIndex=z; p.style.pointerEvents='none'; }
 const canvas = L.canvas({ padding:0.5 });
+const canvasRuas = L.canvas({ padding:0.5, pane:'ruas' });
+const svgRotulos = L.svg({ padding:0.5, pane:'rotulos' });
 
 let G, LOTS_BY_ID, PORT_NODE, ALL_BOUNDS, LMIN=1, LMAX=596;
 let routeLine=null, routeBg=null, routeDone=null, destMarker=null;
@@ -475,11 +480,14 @@ function desenharBase(data){
   // ruas: no satélite, traço branco discreto; no mapa, rua desenhada (ver estiloRua).
   // Primeiro TODAS as bordas, depois todas as ruas — senão a borda de uma rua passa por
   // cima da outra nos cruzamentos.
-  const bordas=data.lines.map(line=>L.polyline(line.path||line, Object.assign({renderer:canvas, interactive:false, lineCap:'round'}, estiloBorda())).addTo(map));
+  const bordas=data.lines.map(line=>L.polyline(line.path||line, Object.assign({renderer:canvasRuas, pane:'ruas', interactive:false, lineCap:'round'}, estiloBorda())).addTo(map));
   data.lines.forEach((line,i)=>{
-    const linha=L.polyline(line.path||line, Object.assign({renderer:canvas, interactive:false, lineCap:'round'}, estiloRua())).addTo(map);
+    const linha=L.polyline(line.path||line, Object.assign({renderer:canvasRuas, pane:'ruas', interactive:false, lineCap:'round'}, estiloRua())).addTo(map);
     RUAS_LY.push({borda:bordas[i], linha});
   });
+  MASCARA=criarMascara(data);
+  criarRotulos(data);
+  aplicarFundoExtras();
   // lotes: não são desenhados (poluíam o mapa); só definem o enquadramento
   const bounds=L.latLngBounds([]);
   for(const lot of data.lots) bounds.extend(lot.latlng);
@@ -487,6 +495,71 @@ function desenharBase(data){
   L.marker(data.portaria,{icon:L.divIcon({className:'',html:'<div class="gate"></div>',iconSize:[16,16],iconAnchor:[8,8]})})
     .addTo(map).bindTooltip(esc(data.portariaNome),{direction:'top'});
   return bounds.pad(0.15);
+}
+// MAPA: o fundo do OpenStreetMap traz as ruas internas do jeito dele, nem sempre no mesmo
+// lugar das nossas (que são as que a rota segue) → "rua sobre rua". Dentro do loteamento a
+// máscara cobre o fundo com a cor de quadra (em volta das nossas ruas e dos lotes) e os
+// nomes passam a ser os nossos (os mesmos da voz). Fora do muro o mapa continua igual.
+let MASCARA=null; const ROTULOS=[];
+const COR_QUADRA='#e0dfdf';
+function criarMascara(data){
+  const ccw=(r)=>{ let a=0; for(let k=0;k<r.length;k++){ const p=r[k], q=r[(k+1)%r.length]; a+=(p[1]*q[0]-q[1]*p[0]); } return a>0 ? r : r.reverse(); };   // todos no mesmo sentido → "nonzero" une tudo
+  const disco=(C,m,n)=>{ const r=[]; for(let k=0;k<n;k++) r.push(offset(C,m,2*Math.PI*k/n)); return ccw(r); };
+  const W=11, polys=[];                                 // meia-largura: rua + calçada
+  for(const line of data.lines){ const p=line.path||line;
+    for(let k=0;k+1<p.length;k++){ const A=p[k], B=p[k+1]; if(metros(A,B)<0.5) continue;
+      const n=angDe(A,B)+Math.PI/2;
+      polys.push([ccw([offset(A,W,n), offset(B,W,n), offset(B,W,n+Math.PI), offset(A,W,n+Math.PI)])]); }
+    for(const P of p) polys.push([disco(P,W,10)]); }
+  for(const lot of data.lots) polys.push([disco(lot.latlng,14,12)]);
+  return L.polygon(polys, { renderer:L.canvas({padding:0.5, pane:'mascara'}), pane:'mascara', stroke:false,
+    fillColor:COR_QUADRA, fillOpacity:1, fillRule:'nonzero', interactive:false }).addTo(map);
+}
+function criarRotulos(data){
+  // junta os trechos de mesmo nome que se encostam numa linha só (um rótulo por rua)
+  const chave=(P)=>P[0].toFixed(6)+','+P[1].toFixed(6), porNome=new Map();
+  for(const line of data.lines){ const nome=line.st!=null && NOME_ST[line.st]; if(!nome) continue;
+    (porNome.get(nome)||porNome.set(nome,[]).get(nome)).push((line.path||line).slice()); }
+  const SVGNS='http://www.w3.org/2000/svg'; let n=0;
+  for(const [nome,trechos] of porNome){
+    while(trechos.length){
+      let cad=trechos.pop(), achou=true;
+      while(achou){ achou=false;
+        for(let k=0;k<trechos.length;k++){ const t=trechos[k];
+          if(chave(t[0])===chave(cad[cad.length-1])) cad=cad.concat(t.slice(1));
+          else if(chave(t[t.length-1])===chave(cad[cad.length-1])) cad=cad.concat(t.slice(0,-1).reverse());
+          else if(chave(t[t.length-1])===chave(cad[0])) cad=t.slice(0,-1).concat(cad);
+          else if(chave(t[0])===chave(cad[0])) cad=t.slice(1).reverse().concat(cad);
+          else continue;
+          trechos.splice(k,1); achou=true; break; } }
+      let comp=0; for(let k=1;k<cad.length;k++) comp+=metros(cad[k-1],cad[k]);
+      if(comp<50) continue;
+      if(xy(cad[cad.length-1],cad[0])[0]<0) cad.reverse();   // texto sempre "de pé" (da esquerda pra direita)
+      const ly=L.polyline(cad,{renderer:svgRotulos, pane:'rotulos', stroke:false, fill:false, interactive:false}).addTo(map);
+      const id='rua-rotulo-'+(n++); ly._path.setAttribute('id', id);
+      const txt=document.createElementNS(SVGNS,'text'), tp=document.createElementNS(SVGNS,'textPath');
+      for(const [a,v] of [['font-size','11'],['font-weight','600'],['font-family','system-ui,-apple-system,Segoe UI,Roboto,sans-serif'],
+        ['fill','#475569'],['stroke','#ffffff'],['stroke-width','3'],['paint-order','stroke'],['dy','0.35em']]) txt.setAttribute(a,v);
+      tp.setAttribute('href','#'+id); tp.setAttributeNS('http://www.w3.org/1999/xlink','xlink:href','#'+id);
+      tp.setAttribute('startOffset','50%'); tp.setAttribute('text-anchor','middle');
+      tp.textContent=nome; txt.appendChild(tp); ly._path.parentNode.appendChild(txt);
+      ROTULOS.push({ly, txt});
+    }
+  }
+  map.on('zoomend', ajustarRotulos);
+}
+// nome só onde cabe inteiro no trecho (e some de longe, quando vira borrão)
+function ajustarRotulos(){
+  if(FUNDO!=='mapa') return;
+  const longe=map.getZoom()<16;
+  for(const r of ROTULOS){ let ok=!longe;
+    if(ok){ try{ ok = r.ly._path.getTotalLength() > r.txt.getComputedTextLength()+24; }catch(e){ ok=false; } }
+    r.txt.setAttribute('visibility', ok?'visible':'hidden'); }
+}
+function aplicarFundoExtras(){
+  const mapa=FUNDO==='mapa';
+  for(const p of ['mascara','rotulos']) map.getPane(p).style.display = mapa ? '' : 'none';
+  if(mapa) ajustarRotulos();
 }
 
 /* ---------------- interface ---------------- */
@@ -790,7 +863,7 @@ function ladoDestino(){
   const p=NAV.pts, b=p[p.length-1]; let k=p.length-2;
   while(k>0 && metros(p[k],b)<8) k--;
   if(k<0) return null;
-  const v=xy(b,p[k]), w=xy(NAV.dest.ll,p[k]);
+  const v=xy(b,p[k]), w=xy(NAV.dest.alvo||NAV.dest.ll,p[k]);   // lado do PRÉDIO (a porta fica na rua)
   return (v[0]*w[1]-v[1]*w[0])>0 ? 'esquerda' : 'direita';
 }
 function desenharRota(){
@@ -896,11 +969,12 @@ function atualizarNav(){
 }
 
 // rota até um lote OU ponto nomeado. Termina na RUA em frente ao destino ('p_<id>').
-function rotaPara(destNode, destLatLng, nome){
+// `alvo` (opcional) = onde o lugar fica de fato (ex.: prédio do Clube); a rota vai até a porta.
+function rotaPara(destNode, destLatLng, nome, alvo){
   liberarAudio();                 // estamos dentro do toque → libera o áudio no iPhone
   $('err').textContent='';
   const frente=G.nodes.has('p_'+destNode) ? 'p_'+destNode : destNode;
-  NAV.dest={ node:destNode, frente, ll:destLatLng, nome };
+  NAV.dest={ node:destNode, frente, ll:destLatLng, nome, alvo:alvo||null };
   NAV.ajusteFeito=false; NAV.semGPS=!GPS.ll; GPS.arrived=false; GPS.offCount=0;
   if(!calcularRota()){ NAV.dest=null; $('err').textContent='Não encontrei rota até esse destino.'; return; }
   $('dName').textContent=nome;
@@ -1215,7 +1289,11 @@ const ORDEM_POI=['Clube','Saída','Administração','Smart Bodega'];
   try{
     const pr=await fetch('dados/pois.geojson',{cache:'no-store'});
     if(pr.ok){ const pj=await pr.json();
-      pois=(pj.features||[]).map(f=>({nome:(f.properties||{}).nome||'POI', latlng:[f.geometry.coordinates[1],f.geometry.coordinates[0]]}));
+      // geometry = PORTA (onde a rota termina); properties.icone [lng,lat] = onde o ícone fica
+      // (ex.: em cima do prédio do Clube). Sem `icone`, o ícone fica na porta.
+      pois=(pj.features||[]).map(f=>{ const pr=f.properties||{}, ic=pr.icone;
+        return {nome:pr.nome||'POI', latlng:[f.geometry.coordinates[1],f.geometry.coordinates[0]],
+                icone:(Array.isArray(ic) && ic.length===2 && ic.every(Number.isFinite)) ? [ic[1],ic[0]] : null}; });
     }
   }catch(e){}
   pois.forEach((p,i)=>{ p.node='POI'+i; grudarNaRua(G, p.latlng, p.node); });
@@ -1238,12 +1316,12 @@ const ORDEM_POI=['Clube','Saída','Administração','Smart Bodega'];
   pois.sort((a,b)=>(ORDEM_POI.indexOf(a.nome)+99)%99-(ORDEM_POI.indexOf(b.nome)+99)%99);
   for(const p of pois){
     const ic=ICON_POI[p.nome]||ICON_POI['Administração'];
-    L.marker(p.latlng,{icon:L.divIcon({className:'',html:`<div class="poi">${ic.replace(/width="22" height="22"/,'width="16" height="16"')}</div>`,iconSize:[28,28],iconAnchor:[14,14]})})
+    L.marker(p.icone||p.latlng,{icon:L.divIcon({className:'',html:`<div class="poi">${ic.replace(/width="22" height="22"/,'width="16" height="16"')}</div>`,iconSize:[28,28],iconAnchor:[14,14]})})
       .addTo(map).bindTooltip(esc(p.nome),{direction:'top'});
     if(!ORDEM_POI.includes(p.nome)) continue;
     const b=document.createElement('button'); b.className='place press'; b.type='button';
     b.innerHTML=`<span class="pi">${ic}</span>${esc(p.nome)}`;
-    b.onclick=()=>rotaPara(p.node, p.latlng, p.nome);
+    b.onclick=()=>rotaPara(p.node, p.latlng, p.nome, p.icone);
     $('places').appendChild(b);
   }
 
