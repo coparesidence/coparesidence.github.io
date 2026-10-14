@@ -68,6 +68,11 @@
   .err{color:var(--danger);font-size:13px;font-weight:600;margin:8px 4px 0;min-height:0}
   .err:empty{display:none}
 
+  .modos{display:flex;gap:4px;background:var(--soft);padding:4px;border-radius:15px;margin:0 0 12px}
+  .modo{flex:1;border:0;background:transparent;border-radius:11px;padding:9px 4px;font:600 14px/1 inherit;font-family:inherit;color:var(--muted);
+    display:flex;align-items:center;justify-content:center;gap:7px;cursor:pointer;transition:background .2s,color .2s,box-shadow .2s}
+  .modo svg{stroke:currentColor}
+  .modo.on{background:#fff;color:var(--teal);box-shadow:0 2px 10px rgba(15,23,42,.12)}
   .places{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin-top:12px}
   .place{border:0;cursor:pointer;background:var(--soft);border-radius:16px;padding:12px 6px 10px;display:flex;flex-direction:column;align-items:center;gap:6px;
     font-size:13px;font-weight:600;color:var(--ink);font-family:inherit}
@@ -137,6 +142,14 @@
   <!-- 1) escolher o destino -->
   <section id="stChoose">
     <h1>Para onde você vai?</h1>
+    <div class="modos" id="modos" role="radiogroup" aria-label="Como você vai">
+      <button type="button" class="modo press" data-modo="carro" role="radio">
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 17h14M3 17v-4l2.2-5.2A2 2 0 0 1 7 6.6h10a2 2 0 0 1 1.8 1.2L21 13v4M3 13h18"/><circle cx="7" cy="17" r="2"/><circle cx="17" cy="17" r="2"/></svg>Carro</button>
+      <button type="button" class="modo press" data-modo="moto" role="radio">
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><circle cx="5.5" cy="16.5" r="3.5"/><circle cx="18.5" cy="16.5" r="3.5"/><path d="M5.5 16.5L10 10h5l3.5 6.5M14 6h3l1.5 4M10 10l-1.5-3H6"/></svg>Moto</button>
+      <button type="button" class="modo press" data-modo="pe" role="radio">
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><circle cx="13" cy="4" r="2"/><path d="M9 21l2-6 3 3v3M7 12l3-4 4 1 2 4 2 1M10 8l-1 5"/></svg>A pé</button>
+    </div>
     <form class="search" id="fLote" autocomplete="off">
       <svg width="20" height="20" viewBox="0 0 24 24" fill="#0d9488"><path d="M12 2a7 7 0 0 0-7 7c0 5.2 7 13 7 13s7-7.8 7-13a7 7 0 0 0-7-7zm0 9.5A2.5 2.5 0 1 1 12 6.5a2.5 2.5 0 0 1 0 5z"/></svg>
       <input id="lote" type="number" min="1" inputmode="numeric" enterkeyhint="go" placeholder="Número do lote">
@@ -160,7 +173,7 @@
     </div>
     <div class="stats">
       <div><b id="rDist">—</b><small>faltam</small></div>
-      <div><b id="rTempo">—</b><small>de moto</small></div>
+      <div><b id="rTempo">—</b><small id="rModo">de moto</small></div>
       <div><b id="rEta">—</b><small>chegada</small></div>
     </div>
     <div class="prog"><i id="progBar"></i></div>
@@ -447,7 +460,15 @@ const BANNED_ST_TURNS=[
 // medida pelo centro (como um cruzamento comum): seguir reto = 0, virar = esquina,
 // retorno = retorno. Por isso o estado carrega `ent` (nó por onde entrou).
 const isRT=(k)=> typeof k==='string' && k.startsWith('RT');
-function dijkstra(g, from, to){
+// A PÉ: pedestre anda na calçada, então mão única não vale — usa também as arestas
+// ao contrário (g.radj, montado no fim do init) e ignora as conversões proibidas.
+function construirReverso(g){
+  const r=new Map();
+  for(const [a,L] of g.adj) for(const e of L) (r.get(e.to)||r.set(e.to,[]).get(e.to)).push({to:a, w:e.w, st:e.st});
+  g.radj=r;
+}
+function dijkstra(g, from, to, opt){
+  const pe=!!(opt && opt.pe);
   const CL=g.cluster||new Map(), CC=g.clusterCenter||new Map();
   const dist=new Map(), prev=new Map();
   const k0=from+'||';
@@ -459,11 +480,12 @@ function dijkstra(g, from, to){
     const ku=u+'|'+pu+'|'+ent;
     if((dist.get(ku)??Infinity)<d) continue;
     if(u===to){ endKey=ku; break; }
-    const stIn = pu ? ((g.adj.get(pu)||[]).find(x=>x.to===u)||{}).st : null;
+    const stIn = (pu && !pe) ? ((g.adj.get(pu)||[]).find(x=>x.to===u)||{}).st : null;
     const cu=CL.get(u);
-    for(const e of (g.adj.get(u)||[])){
+    const viz = pe ? (g.adj.get(u)||[]).concat((g.radj && g.radj.get(u))||[]) : (g.adj.get(u)||[]);
+    for(const e of viz){
       if(e.to===pu) continue;                        // sem meia-volta imediata
-      if(BANNED_ST_TURNS.some(t=>t.via===u && stIn===t.from && e.st===t.to)) continue;
+      if(!pe && BANNED_ST_TURNS.some(t=>t.via===u && stIn===t.from && e.st===t.to)) continue;
       const cv=CL.get(e.to);
       let pen=0, nent='';
       if(cu && cv===cu){ nent=ent; }                 // andando dentro do nó composto
@@ -675,8 +697,25 @@ function setManobra(icon, dist, txt){ $('manIcon').innerHTML=icon; $('manDist').
 
 /* ---------------- rota + navegação em tempo real ---------------- */
 const NAV={ dest:null, ids:null, pts:null, cum:null, mans:[], total:0, lastS:0, origemGPS:false, lado:null };
-const GPS={ ll:null, acc:999, heading:null, marker:null, accCircle:null, watch:null, offCount:0, lastRecalc:0, follow:true, arrived:false };
+// vis/visHd = posição e rumo MOSTRADOS: durante a rota a bolinha fica grudada na linha
+const GPS={ ll:null, acc:999, heading:null, vis:null, visHd:null, marker:null, accCircle:null, watch:null, offCount:0, lastRecalc:0, follow:true, arrived:false };
 const dentroDoLoteamento=(ll)=> !!(ALL_BOUNDS && ll && ALL_BOUNDS.contains(L.latLng(ll[0],ll[1])));
+
+// como a pessoa vai: muda a velocidade estimada e — a pé — libera a contramão (calçada)
+// e deixa a detecção de "saiu da rota" mais tolerante (GPS a pé oscila mais).
+const MODOS={
+  carro:{ kmh:15,  rotulo:'de carro', pe:false, lim:25, leituras:2, intervalo:5000 },
+  moto: { kmh:18,  rotulo:'de moto',  pe:false, lim:25, leituras:2, intervalo:5000 },
+  pe:   { kmh:4.5, rotulo:'a pé',     pe:true,  lim:35, leituras:3, intervalo:8000 },
+};
+let MODO='moto';
+try{ const m=localStorage.getItem('copa.modo'); if(MODOS[m]) MODO=m; }catch(e){}
+const modo=()=>MODOS[MODO];
+const minutos=(m)=>Math.max(1, Math.round(m/(modo().kmh*1000/60)));
+function setModo(m){
+  MODO=m; try{ localStorage.setItem('copa.modo',m); }catch(e){}
+  document.querySelectorAll('#modos .modo').forEach(b=>{ const on=b.dataset.modo===m; b.classList.toggle('on',on); b.setAttribute('aria-checked',on); });
+}
 
 // rota saindo de um ponto qualquer (a bolinha do GPS): cria um nó temporário na rua
 // mais próxima, respeitando a mão única e — em mão dupla — o rumo da moto (não manda
@@ -687,15 +726,16 @@ function rotaDoPonto(ll, heading, destino){
   const id='p_GPS', A=G.nodes.get(best.a), B=G.nodes.get(best.b);
   G.nodes.set(id, best.latlng); G.adj.set(id, []);
   const add=(to)=>G.adj.get(id).push({to, w:metros(best.latlng,G.nodes.get(to)), st:best.st});
-  let paraB=best.ow>=0, paraA=best.ow<=0;
-  if(paraA && paraB && heading!=null){
+  const pe=modo().pe;
+  let paraB=pe || best.ow>=0, paraA=pe || best.ow<=0;   // a pé: qualquer sentido
+  if(!pe && paraA && paraB && heading!=null){
     const ab=xy(B,A), hv=[Math.sin(heading*rad), Math.cos(heading*rad)];
     if(ab[0]*hv[0]+ab[1]*hv[1]>=0) paraA=false; else paraB=false;
   }
   if(paraB) add(best.b);
   if(paraA) add(best.a);
   let r=null;
-  try{ r=dijkstra(G, id, destino); if(r) r.coords=r.path.map(n=>G.nodes.get(n)); }
+  try{ r=dijkstra(G, id, destino, {pe}); if(r) r.coords=r.path.map(n=>G.nodes.get(n)); }
   finally{ G.nodes.delete(id); G.adj.delete(id); }
   return r;
 }
@@ -703,7 +743,7 @@ function rotaDoPonto(ll, heading, destino){
 function calcularRota(){
   let r=null, deGPS=false;
   if(GPS.ll && dentroDoLoteamento(GPS.ll) && GPS.acc<=40){ r=rotaDoPonto(GPS.ll, GPS.heading, NAV.dest.frente); deGPS=!!r; }
-  if(!r){ r=dijkstra(G, PORT_NODE, NAV.dest.frente); if(r) r.coords=r.path.map(n=>G.nodes.get(n)); }
+  if(!r){ r=dijkstra(G, PORT_NODE, NAV.dest.frente, {pe:modo().pe}); if(r) r.coords=r.path.map(n=>G.nodes.get(n)); }
   if(!r) return null;
   const ids=deGPS ? ['GPS'].concat(r.path) : r.path;
   const pts=deGPS ? [GPS.ll].concat(r.coords) : r.coords;
@@ -745,6 +785,20 @@ function projetarRota(ll){
   NAV.lastS=Math.max(NAV.lastS, r.s);
   return r;
 }
+// ponto e rumo da rota a `s` metros do início (p/ desenhar a bolinha grudada na linha)
+function pontoEm(s){
+  const p=NAV.pts, c=NAV.cum;
+  for(let i=0;i+1<p.length;i++) if(c[i+1]>=s){
+    const t=Math.max(0, Math.min(1, (s-c[i])/((c[i+1]-c[i])||1)));
+    return { ll:[p[i][0]+(p[i+1][0]-p[i][0])*t, p[i][1]+(p[i+1][1]-p[i][1])*t], i };
+  }
+  return { ll:p[p.length-1], i:p.length-2 };
+}
+function rumoEm(i){
+  const p=NAV.pts; let j=i;
+  while(j+2<p.length && metros(p[j],p[j+1])<1) j++;   // pula trechos de comprimento ~0
+  const v=xy(p[j+1],p[j]); return (Math.atan2(v[0],v[1])/rad+360)%360;
+}
 function trechoAte(s){
   const p=NAV.pts, c=NAV.cum, out=[];
   for(let i=0;i+1<p.length;i++){
@@ -764,19 +818,23 @@ function centrarEm(ll, zoom){
 function atualizarNav(){
   if(!NAV.pts || GPS.arrived) return;
   let s=0;
-  const dentro=dentroDoLoteamento(GPS.ll);
+  const dentro=dentroDoLoteamento(GPS.ll), M=modo();
+  GPS.vis=null;
   if(GPS.ll && dentro){
-    const pr=projetarRota(GPS.ll); s=pr.s;
-    // saiu da rota? (2 leituras seguidas longe da linha, GPS razoável) → recalcula
-    const lim=Math.max(25, Math.min(GPS.acc, 45));
+    const pr=projetarRota(GPS.ll);
+    s=NAV.lastS;                       // progresso só anda pra frente (GPS tremendo não "volta" a bolinha)
+    // perto da linha → a bolinha fica GRUDADA na rota (posição e rumo da própria rua)
+    const lim=Math.max(M.lim, Math.min(GPS.acc, 45));
+    if(pr.d<=lim){ const pe=pontoEm(s); GPS.vis=pe.ll; GPS.visHd=rumoEm(pe.i); }
+    // saiu da rota? (N leituras seguidas longe da linha, GPS razoável) → recalcula
     GPS.offCount = (pr.d>lim && GPS.acc<=50) ? GPS.offCount+1 : 0;
-    if(GPS.offCount>=2 && Date.now()-GPS.lastRecalc>5000){
+    if(GPS.offCount>=M.leituras && Date.now()-GPS.lastRecalc>M.intervalo){
       GPS.lastRecalc=Date.now(); GPS.offCount=0;
       if(calcularRota()){ toast('Rota recalculada'); falar('Rota recalculada.', true); return atualizarNav(); }
     }
     // chegou?
     if(NAV.total-s<15 || metros(GPS.ll, NAV.pts[NAV.pts.length-1])<18) return chegou();
-    if(GPS.follow) centrarEm(GPS.ll, map.getZoom()<17 ? 18 : null);
+    if(GPS.follow) centrarEm(GPS.vis||GPS.ll, map.getZoom()<17 ? 18 : null);
     $('navHint').textContent='';
   } else {
     $('navHint').textContent = !GPS.ll ? $('navHint').textContent
@@ -784,7 +842,7 @@ function atualizarNav(){
   }
   routeDone.setLatLngs(trechoAte(s));
   const falta=Math.max(0, NAV.total-s);
-  const min=Math.max(1, Math.round(falta/(CONFIG.velocidadeMotoKmh*1000/60)));
+  const min=minutos(falta);
   $('rDist').textContent=fmtDist(falta);
   $('rTempo').textContent=min+' min';
   $('rEta').textContent=new Date(Date.now()+min*60000).toLocaleTimeString('pt-BR',{hour:'2-digit',minute:'2-digit'});
@@ -803,6 +861,7 @@ function rotaPara(destNode, destLatLng, nome){
   GPS.arrived=false; GPS.offCount=0;
   if(!calcularRota()){ NAV.dest=null; $('err').textContent='Não encontrei rota até esse destino.'; return; }
   $('dName').textContent=nome;
+  $('rModo').textContent=modo().rotulo;
   estado('stNav');
   vozInicio();                    // ainda dentro do toque → libera a voz no iPhone
   ligarGPS(); manterTelaLigada();
@@ -810,15 +869,18 @@ function rotaPara(destNode, destLatLng, nome){
   requestAnimationFrame(()=>{ map.fitBounds(L.latLngBounds(NAV.pts).pad(0.1), Object.assign(padOpts(),{maxZoom:18})); atualizarNav(); });
 }
 function chegou(){
-  GPS.arrived=true;
-  routeDone.setLatLngs(NAV.pts);
+  GPS.arrived=true; GPS.vis=null;
+  // chegou: a linha da rota some (fica só a bandeira do destino)
+  [routeLine,routeBg,routeDone].forEach(l=>l&&map.removeLayer(l));
+  routeLine=routeBg=routeDone=null;
   $('arrTxt').textContent=`${NAV.dest.nome} fica à sua ${NAV.lado||'frente'}.`;
   estado('stArr'); soltarTela(); confete();
   falar(`Você chegou. ${maiusc(comArtigo(NAV.dest.nome))} fica à sua ${NAV.lado||'frente'}.`, true);
 }
 function encerrar(){
   if('speechSynthesis' in window) speechSynthesis.cancel();
-  NAV.dest=null; NAV.pts=null; GPS.arrived=false;
+  NAV.dest=null; NAV.pts=null; GPS.arrived=false; GPS.vis=null;
+  if(GPS.ll) desenharEu();
   [routeLine,routeBg,routeDone,destMarker].forEach(l=>l&&map.removeLayer(l));
   routeLine=routeBg=routeDone=destMarker=null;
   $('lote').value=''; $('err').textContent=''; $('recenter').hidden=true;
@@ -852,17 +914,20 @@ function onFix(pos){
   if(hd==null && GPS.ll && metros(GPS.ll,ll)>4){ const v=xy(ll,GPS.ll); hd=(Math.atan2(v[0],v[1])/rad+360)%360; }
   if(hd!=null) GPS.heading=hd;
   GPS.ll=ll; GPS.acc=c.accuracy||999;
+  if(NAV.dest) atualizarNav();          // decide se a bolinha gruda na rota (GPS.vis)
   desenharEu();
-  if(NAV.dest) atualizarNav();
 }
+// desenha a bolinha: grudada na rota (GPS.vis) quando está no caminho; senão, onde o GPS diz
 function desenharEu(){
-  const cone=`display:${GPS.heading==null?'none':'block'};transform:rotate(${GPS.heading||0}deg)`;
+  const ll=GPS.vis||GPS.ll, hd=GPS.vis ? GPS.visHd : GPS.heading;
+  const cone=`display:${hd==null?'none':'block'};transform:rotate(${hd||0}deg)`;
+  const raio=GPS.vis ? 0 : Math.min(GPS.acc,80);   // grudada: some o círculo de precisão
   if(!GPS.marker){
-    GPS.accCircle=L.circle(GPS.ll,{radius:Math.min(GPS.acc,80),color:'#2563eb',weight:1,opacity:.35,fillOpacity:.08,interactive:false}).addTo(map);
-    GPS.marker=L.marker(GPS.ll,{interactive:false,zIndexOffset:1000,icon:L.divIcon({className:'',iconSize:[24,24],iconAnchor:[12,12],
+    GPS.accCircle=L.circle(ll,{radius:raio,color:'#2563eb',weight:1,opacity:.35,fillOpacity:.08,interactive:false}).addTo(map);
+    GPS.marker=L.marker(ll,{interactive:false,zIndexOffset:1000,icon:L.divIcon({className:'',iconSize:[24,24],iconAnchor:[12,12],
       html:`<div class="me"><div class="cone" style="${cone}"></div><div class="halo"></div><div class="dot"></div></div>`})}).addTo(map);
   } else {
-    GPS.marker.setLatLng(GPS.ll); GPS.accCircle.setLatLng(GPS.ll).setRadius(Math.min(GPS.acc,80));
+    GPS.marker.setLatLng(ll); GPS.accCircle.setLatLng(ll).setRadius(raio);
     const el=GPS.marker.getElement(), cn=el && el.querySelector('.cone');
     if(cn) cn.style.cssText=cone;
   }
@@ -896,7 +961,7 @@ const maiusc=(t)=> t.charAt(0).toUpperCase()+t.slice(1);
 // "o lote 367", "o Clube", "a Saída", "a Administração"
 const comArtigo=(nome)=> /^Lote /.test(nome) ? 'o '+minusc(nome) : (/(a|ção|ída)$/i.test(nome) ? 'a ' : 'o ')+nome;
 function vozInicio(){
-  const min=Math.max(1, Math.round(NAV.total/(CONFIG.velocidadeMotoKmh*1000/60))), prox=NAV.mans[0];
+  const min=minutos(NAV.total), prox=NAV.mans[0];
   let t=`Rota para ${comArtigo(NAV.dest.nome)}: ${distFalada(NAV.total)}, cerca de ${min} ${min>1?'minutos':'minuto'}.`;
   if(prox && prox.s<=200){ t+=` Em ${distFalada(prox.s)}, ${minusc(textoManobra(prox))}.`; prox.ditoLonge=true; }
   else if(prox) t+=` Siga em frente por ${distFalada(prox.s)}.`;
@@ -1044,6 +1109,7 @@ const ORDEM_POI=['Clube','Saída','Administração'];
   }catch(e){}
   pois.forEach((p,i)=>{ p.node='POI'+i; grudarNaRua(G, p.latlng, p.node); });
   absorverAcessos(G);
+  construirReverso(G);            // p/ o modo a pé (contramão liberada)
 
   ALL_BOUNDS = desenharBase(data);
   // rotatórias no mapa (contorno branco discreto)
@@ -1074,6 +1140,8 @@ const ORDEM_POI=['Clube','Saída','Administração'];
   // eventos
   $('fLote').addEventListener('submit',traçar);
   $('cancel').onclick=encerrar;
+  setModo(MODO);
+  document.querySelectorAll('#modos .modo').forEach(b=> b.onclick=()=>setModo(b.dataset.modo));
   setSom(VOZ.ligada);
   $('som').onclick=()=>{ setSom(!VOZ.ligada); if(VOZ.ligada) falar('Voz ligada.', true); };
   $('again').onclick=encerrar;
@@ -1087,7 +1155,7 @@ const ORDEM_POI=['Clube','Saída','Administração'];
   if('serviceWorker' in navigator && location.protocol!=='file:') navigator.serviceWorker.register('sw.js').catch(()=>{});
 
   // expõe p/ depuração no console (e p/ simular o GPS nos testes)
-  Object.assign(window,{ G, LOTS_BY_ID, PORT_NODE, dijkstra, rotaPara, NAV, GPS, onFix });
+  Object.assign(window,{ G, LOTS_BY_ID, PORT_NODE, dijkstra, rotaPara, NAV, GPS, onFix, setModo, modo });
   window.simularGPS=(pontos, ms=700, acc=6)=>{ clearInterval(window._sim); let i=0;
     window._sim=setInterval(()=>{ if(i>=pontos.length) return clearInterval(window._sim);
       const p=pontos[i++]; onFix({coords:{latitude:p[0],longitude:p[1],accuracy:acc,heading:null,speed:null}}); }, ms); };
