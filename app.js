@@ -448,6 +448,9 @@ const larguraRua=(tipo)=>{ const [m,min]=LARGURA[tipo]||LARGURA.interna; return 
 const estiloRua=(tipo)=> FUNDO==='mapa' ? {color:'#ffffff',weight:larguraRua(tipo),opacity:1}
                        : (tipo==='avenida' ? {opacity:0} : {color:'#ffffff',weight:2,opacity:.35});
 const estiloBorda=(tipo)=> FUNDO==='mapa' ? {color:'#c3ccd6',weight:larguraRua(tipo)+3,opacity:1} : {opacity:0};
+const PISO_LY=[];
+const estiloPiso=(tipo)=> FUNDO!=='mapa' ? {stroke:false, fill:false}
+  : {stroke:false, fill:true, fillOpacity:1, fillColor: tipo==='pisoBorda' ? '#c3ccd6' : '#ffffff'};
 const estiloRot=()=> FUNDO==='mapa' ? {color:'#94a3b8',weight:2,opacity:1,fillColor:'#cbd5e1',fillOpacity:.6} : {color:'#ffffff',weight:2,opacity:.8,fillColor:'#ffffff',fillOpacity:.15};
 function setFundo(f){
   if(!FUNDOS[f]) return;
@@ -455,6 +458,7 @@ function setFundo(f){
   map.getContainer().style.background = f==='mapa' ? COR_FUNDO_MAPA : '';
   try{ localStorage.setItem('copa.fundo', f); }catch(e){}
   for(const r of RUAS_LY){ r.borda.setStyle(estiloBorda(r.tipo)); r.linha.setStyle(estiloRua(r.tipo)); }
+  for(const p of PISO_LY) p.setStyle(estiloPiso(p.options.tipo));
   for(const c of ROT_LY) c.setStyle(estiloRot());
   if(ROTULOS.length) aplicarFundoExtras();
   const b=$('fundo'); if(b){ const outro=f==='satelite'?'mapa':'satelite';
@@ -491,6 +495,16 @@ function desenharBase(data){
   // + `data.extras`: só desenho, fora das rotas (pistas da portaria e a avenida — dados/acessos.geojson)
   const todas=data.lines.concat(data.extras||[]);
   const bordas=todas.map(line=>L.polyline(line.path||line, Object.assign({renderer:canvasRuas, pane:'ruas', interactive:false, lineCap:'round'}, estiloBorda(line.tipo))).addTo(map));
+  // PISO (só no mapa), entre as bordas e as ruas: a faixa de circulação em volta de cada
+  // rotatória (o contorno aparece como rua — dá pra ver o retorno) e as áreas pavimentadas
+  // (entrada: tudo pavimentado entre as pistas, sem canteiro)
+  const opt={renderer:canvasRuas, pane:'ruas', interactive:false};
+  for(const rt of (window.ROTATORIAS||[]).filter(r=>r.circula)){
+    // faixa de 2 m em volta da ilha (= onde a rota contorna; mais larga invadia os lotes)
+    PISO_LY.push(L.circle([rt.lat,rt.lng], Object.assign({radius:rt.raio+2.4, tipo:'pisoBorda'}, opt, estiloPiso('pisoBorda'))).addTo(map));
+    PISO_LY.push(L.circle([rt.lat,rt.lng], Object.assign({radius:rt.raio+2, tipo:'piso'}, opt, estiloPiso('piso'))).addTo(map));
+  }
+  for(const p of (data.pisos||[])) PISO_LY.push(L.polygon(p, Object.assign({tipo:'piso'}, opt, estiloPiso('piso'))).addTo(map));
   todas.forEach((line,i)=>{
     const linha=L.polyline(line.path||line, Object.assign({renderer:canvasRuas, pane:'ruas', interactive:false, lineCap:'round'}, estiloRua(line.tipo))).addTo(map);
     RUAS_LY.push({borda:bordas[i], linha, tipo:line.tipo});
@@ -623,16 +637,19 @@ function manobras(ids, pts, cum){
         let j1=j; if(ligaAnel(j1,c)) j1++;
         while(j1<ids.length-1 && metros(pts[j1],pts[j1-1])<1) j1++;
         const ctr=CC.get(c), ang=anguloVirada(antes(i0),ctr,depois(j1-1)), rot=isRT(ids[i]), tipo=classificar(ang);
-        // rotatória: conta as saídas (nós do anel com rua saindo) até a que a rota pega
-        // (saídas no mesmo ângulo = a mesma rua ligada 2×; a rua por onde entrou não conta)
+        // rotatória: conta as saídas até a que a rota pega. Saída = nó do anel com TRECHO DE RUA
+        // saindo (mesmo que o 1º ponto seja o acesso de um lote); medida pela direção do BRAÇO
+        // (onde a rua encosta), não do nó do anel: duas ligações no mesmo braço contam uma vez
+        // e o braço por onde entrou não conta.
         let saida=0;
         if(rot){
           const dif=(x,y)=>Math.abs(Math.atan2(Math.sin(x-y),Math.cos(x-y)));
           const aE=angDe(ctr,pts[i-1]), vistas=[];
           for(let k=i+1;k<j;k++){
             if(!isRT(ids[k])) continue;
-            if(!(G.adj.get(ids[k])||[]).some(e=>!isRT(e.to) && !e.to.startsWith('p_L') && CL.get(e.to)!==c)) continue;
-            const a=angDe(ctr,pts[k]);
+            const fora=(G.adj.get(ids[k])||[]).filter(e=>!isRT(e.to) && e.st!=null && CL.get(e.to)!==c);
+            if(!fora.length) continue;
+            const a=angDe(ctr,G.nodes.get(fora[0].to));
             if(k<j-1 && dif(a,aE)<0.35) continue;
             if(vistas.some(v=>dif(v,a)<0.26)) continue;
             vistas.push(a); saida++;
@@ -642,6 +659,7 @@ function manobras(ids, pts, cum){
         // é retorno pela rotatória — "Na rotatória, faça o retorno", não "pegue a 1ª saída"
         let angM=ang;
         if(rot && metros(pts[i-1],pts[j])<2){ saida=0; angM=180; }
+        else if(rot && saida<1) saida=1;   // entrou e saiu pelo mesmo nó do anel: foi a 1ª saída
         if(rot || tipo!=='reto') out.push({s:(cum[i]+cum[j-1])/2, ang:angM, rot, tipo, saida, rua:ruaApos(ids, j-1)});
         i=j1; continue;
       }
@@ -1211,7 +1229,8 @@ const ORDEM_POI=['Clube','Saída','Administração','Smart Bodega'];
   try{
     const rr=await fetch('dados/rotatorias.geojson',{cache:'no-store'});
     if(rr.ok){ const rj=await rr.json();
-      const rots=(rj.features||[]).map(f=>({lat:f.geometry.coordinates[1], lng:f.geometry.coordinates[0], raio:(f.properties||{}).raio_m||6, nome:(f.properties||{}).nome}));
+      const rots=(rj.features||[]).map(f=>({lat:f.geometry.coordinates[1], lng:f.geometry.coordinates[0], raio:(f.properties||{}).raio_m||6, nome:(f.properties||{}).nome,
+        circula:!SEM_CIRCULACAO.includes((f.properties||{}).nome)}));
       injectRotatorias(G, rots.filter(r=>!SEM_CIRCULACAO.includes(r.nome)));
       window.ROTATORIAS=rots;
     }
@@ -1306,10 +1325,12 @@ const ORDEM_POI=['Clube','Saída','Administração','Smart Bodega'];
   // pistas da portaria e a avenida em frente (só desenho, não entram nas rotas)
   try{
     const ar=await fetch('dados/acessos.geojson',{cache:'no-store'});
-    if(ar.ok) data.extras=((await ar.json()).features||[]).filter(f=>f.geometry && f.geometry.type==='LineString').map(f=>{
-      const pr=f.properties||{};
-      return { path:f.geometry.coordinates.map(c=>[c[1],c[0]]), tipo:pr.tipo==='avenida'?'avenida':'acesso',
-               rotulo: typeof pr.nome==='string' ? pr.nome : null }; });
+    if(ar.ok){ const fs=((await ar.json()).features||[]).filter(f=>f.geometry);
+      data.extras=fs.filter(f=>f.geometry.type==='LineString').map(f=>{
+        const pr=f.properties||{};
+        return { path:f.geometry.coordinates.map(c=>[c[1],c[0]]), tipo:pr.tipo==='avenida'?'avenida':'acesso',
+                 rotulo: typeof pr.nome==='string' ? pr.nome : null }; });
+      data.pisos=fs.filter(f=>f.geometry.type==='Polygon').map(f=>f.geometry.coordinates[0].map(c=>[c[1],c[0]])); }
   }catch(e){}
 
   ALL_BOUNDS = desenharBase(data);

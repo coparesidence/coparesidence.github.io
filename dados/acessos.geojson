@@ -1,5 +1,7 @@
-{"type":"FeatureCollection","name":"acessos","_nota":"só desenho (modo Mapa): pistas RETAS e paralelas (rumo do canteiro) da portaria até a avenida — entrada ao norte, saída ao sul — e o trecho da Av. Gov. Tarcísio Maia em frente ao condomínio; NÃO entram nas rotas.","features":[
+{"type":"FeatureCollection","name":"acessos","_nota":"só desenho (modo Mapa): pistas RETAS e paralelas (rumo do canteiro) da portaria até a avenida — entrada ao norte, saída ao sul — o piso pavimentado entre as pistas internas (entrada e rotatória 4 sem canteiro) e o trecho da Av. Gov. Tarcísio Maia em frente ao condomínio; NÃO entram nas rotas.","features":[
 {"type":"Feature","properties":{"tipo":"acesso","nome":"Avenida Atlântica"},"geometry":{"type":"LineString","coordinates":[[-37.389732,-5.177753],[-37.3891948,-5.1777153]]}},
 {"type":"Feature","properties":{"tipo":"acesso","nome":"Avenida Atlântica"},"geometry":{"type":"LineString","coordinates":[[-37.389704,-5.177873],[-37.3893028,-5.1778448]]}},
-{"type":"Feature","properties":{"tipo":"avenida","nome":"Avenida Governador Tarcísio Maia"},"geometry":{"type":"LineString","coordinates":[[-37.3906036,-5.1794048],[-37.3882985,-5.1766404]]}}
+{"type":"Feature","properties":{"tipo":"avenida","nome":"Avenida Governador Tarcísio Maia"},"geometry":{"type":"LineString","coordinates":[[-37.3906036,-5.1794048],[-37.3882985,-5.1766404]]}},
+{"type":"Feature","properties":{"tipo":"piso","nome":"Entrada (pavimentado)"},"geometry":{"type":"Polygon","coordinates":[[[-37.389732,-5.177753],[-37.38993,-5.177789],[-37.389929,-5.177852],[-37.389924,-5.177902],[-37.389704,-5.177873],[-37.389732,-5.177753]]]}},
+{"type":"Feature","properties":{"tipo":"piso","nome":"Rotatória 4 (sem canteiro)"},"geometry":{"type":"Polygon","coordinates":[[[-37.39233,-5.176976],[-37.392402,-5.177084],[-37.392149,-5.177193],[-37.39233,-5.176976]]]}}
 ]}

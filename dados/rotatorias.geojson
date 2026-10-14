@@ -4,11 +4,12 @@
   {
    "type": "Feature",
    "properties": {
-    "raio_m": 5.4,
+    "raio_m": 3.0,
     "nome": "Rotatória 1",
     "frente": [
      596
-    ]
+    ],
+    "raio_dwg_m": 5.4
    },
    "geometry": {
     "type": "Point",
@@ -26,13 +27,17 @@
     "frente": [
      447,
      448
+    ],
+    "centro_dwg": [
+     -37.390134,
+     -5.1763
     ]
    },
    "geometry": {
     "type": "Point",
     "coordinates": [
      -37.390134,
-     -5.1763
+     -5.1762774
     ]
    }
   },
@@ -44,13 +49,17 @@
     "frente": [
      489,
      490
+    ],
+    "centro_dwg": [
+     -37.393026,
+     -5.173607
     ]
    },
    "geometry": {
     "type": "Point",
     "coordinates": [
-     -37.393026,
-     -5.173607
+     -37.3930106,
+     -5.1735904
     ]
    }
   },

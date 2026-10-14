@@ -2,7 +2,7 @@
 // Só cuida de arquivos do PRÓPRIO site (nada de terceiros): REDE PRIMEIRO (sempre a versão
 // mais nova) e, se o sinal cair dentro do loteamento, usa a última cópia salva. Imagens de
 // mapa/satélite (outros domínios) não passam por aqui. Só guarda respostas 200 do mesmo site.
-const CACHE = 'copa-v11';
+const CACHE = 'copa-v12';
 const BASICO = [
   './', './index.html', './app.js', './manifest.webmanifest',
   './vendor/leaflet/leaflet.js', './vendor/leaflet/leaflet.css',
