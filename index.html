@@ -610,13 +610,9 @@ function desenharBase(data){
     const path=line.path||line;
     L.polyline(path, {color:'#ffffff', weight:2, opacity:.35, renderer:canvas, interactive:false}).addTo(map);
   }
-  // lotes
+  // lotes: não são desenhados (pedido do André — poluíam o mapa); só definem o enquadramento
   const bounds=L.latLngBounds([]);
-  for(const lot of data.lots){
-    const m=L.circleMarker(lot.latlng,{radius:2.2,color:'#fde68a',weight:1,fillColor:'#fde68a',fillOpacity:.75,renderer:canvas});
-    m.bindTooltip(`Lote ${lot.id}`,{direction:'top'}); m.addTo(map);
-    bounds.extend(lot.latlng);
-  }
+  for(const lot of data.lots) bounds.extend(lot.latlng);
   bounds.extend(data.portaria);
   L.marker(data.portaria,{icon:L.divIcon({className:'',html:'<div class="gate"></div>',iconSize:[16,16],iconAnchor:[8,8]})})
     .addTo(map).bindTooltip(data.portariaNome,{direction:'top'});
