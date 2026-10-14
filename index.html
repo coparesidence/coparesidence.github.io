@@ -260,20 +260,23 @@ function injectRotatorias(g, rots){
   for(const e of g.edges){ if(!e) continue; deg.set(e[0],(deg.get(e[0])||0)+1); deg.set(e[1],(deg.get(e[1])||0)+1); }
   for(const R of rots){
     const M=[R.lat,R.lng], r=Math.max(R.raio||4, 3), cos0=Math.cos(M[0]*rad);
-    // 1) acha o CRUZAMENTO (grau≥3) mais próximo do marcador, até 35m → centro do anel
+    // 1) TODOS os cruzamentos (grau≥3) a até 20 m do círculo do DWG viram a rotatória.
+    //    A malha tem 2–3 cruzamentos "picados" em volta de cada ilha; usar só o mais
+    //    próximo deixava ruas chegando FORA do anel (ex.: a diagonal dos lotes 440–448 na
+    //    rot.2) → a rota entrava, saía e voltava em gancho. Sem nenhum a 20 m, usa o mais
+    //    próximo até 35 m.
+    const cset=new Set();
     let J=null, bd=Infinity;
     for(const [k,ll] of g.nodes){ if(skip(k)||(deg.get(k)||0)<3) continue;
-      const d=metros(ll,M); if(d<bd){ bd=d; J=k; } }
-    if(!J || bd>35) continue;
-    g.nodes.set(J, [M[0], M[1]]);                            // ALINHA o cruzamento ao círculo do DWG
-    const C=g.nodes.get(J);                                  // agora C = círculo do DWG, e os braços saem daqui (ângulos certos)
-    const cset=new Set([J]);
-    // braços = arestas incidentes ao cruzamento J (rua real)
+      const d=metros(ll,M); if(d<=20) cset.add(k); if(d<bd){ bd=d; J=k; } }
+    if(!cset.size){ if(!J || bd>35) continue; cset.add(J); }
+    const C=[M[0], M[1]];                                    // centro do anel = círculo do DWG
+    // braços = arestas que saem do conjunto de cruzamentos (ruas reais chegando na ilha)
     const arms=[];
     for(let i=0;i<g.edges.length;i++){
       const e=g.edges[i]; if(!e) continue;
-      const [a,b,ow,st]=e; if(a!==J && b!==J) continue;
-      const centerIsB=(b===J), out=centerIsB?a:b, oll=g.nodes.get(out);
+      const [a,b,ow,st]=e, aC=cset.has(a), bC=cset.has(b); if(aC===bC) continue;
+      const centerIsB=bC, out=centerIsB?a:b, oll=g.nodes.get(out);
       const ang=Math.atan2(oll[0]-C[0], (oll[1]-C[1])*cos0);  // ângulo do braço
       const into  = centerIsB ? ow>=0 : ow<=0;           // fluxo ENTRA na rotatória?
       const outof = centerIsB ? ow<=0 : ow>=0;           // fluxo SAI da rotatória?
@@ -293,6 +296,7 @@ function injectRotatorias(g, rots){
     const base='RT'+Math.round(C[0]*1e5)+'_'+Math.round(C[1]*1e5)+'_';
     // o anel inteiro é um "nó composto": o Dijkstra cobra a manobra entrada→saída
     (g.clusterCenter ||= new Map()).set(base.slice(0,-1), C);
+    (g.clusterRaio ||= new Map()).set(base.slice(0,-1), r);
     pts.forEach((p,idx)=>{
       p.id=base+idx;
       (g.cluster ||= new Map()).set(p.id, base.slice(0,-1));
@@ -653,7 +657,22 @@ function manobras(ids, pts, cum){
       let j=i; while(j<ids.length && CL.get(ids[j])===c) j++;
       if(j<ids.length){
         const ctr=CC.get(c), ang=anguloVirada(pts[i-1],ctr,pts[j]), rot=isRT(ids[i]), tipo=classificar(ang);
-        if(rot || tipo!=='reto') out.push({s:(cum[i]+cum[j-1])/2, ang, rot, tipo});
+        // rotatória: conta as saídas (nós do anel com rua saindo) até a que a rota pega
+        // (saídas no mesmo ângulo = a mesma rua ligada 2×; a rua por onde entrou não conta)
+        let saida=0;
+        if(rot){
+          const dif=(x,y)=>Math.abs(Math.atan2(Math.sin(x-y),Math.cos(x-y)));
+          const aE=angDe(ctr,pts[i-1]), vistas=[];
+          for(let k=i+1;k<j;k++){
+            if(!isRT(ids[k])) continue;
+            if(!(G.adj.get(ids[k])||[]).some(e=>!isRT(e.to) && !e.to.startsWith('p_L') && CL.get(e.to)!==c)) continue;
+            const a=angDe(ctr,pts[k]);
+            if(k<j-1 && dif(a,aE)<0.35) continue;
+            if(vistas.some(v=>dif(v,a)<0.26)) continue;
+            vistas.push(a); saida++;
+          }
+        }
+        if(rot || tipo!=='reto') out.push({s:(cum[i]+cum[j-1])/2, ang, rot, tipo, saida});
       }
       i=j; continue;
     }
@@ -672,8 +691,11 @@ function manobras(ids, pts, cum){
   return res;
 }
 const TXT={'esq':'Vire à esquerda','dir':'Vire à direita','leve-esq':'Mantenha à esquerda','leve-dir':'Mantenha à direita','retorno':'Faça o retorno'};
+const ORDINAL=['','primeira','segunda','terceira','quarta','quinta','sexta'];
 function textoManobra(m){
   if(!m.rot) return TXT[m.tipo];
+  // como o Google Maps: "Na rotatória, pegue a 2ª saída"
+  if(m.saida>=1 && m.saida<ORDINAL.length) return `Na rotatória, pegue a ${ORDINAL[m.saida]} saída`;
   const x=Math.abs(m.ang);
   return 'Na rotatória, ' + (x<35?'siga em frente' : x<140 ? (m.ang>0?'saia à esquerda':'saia à direita') : 'faça o retorno');
 }
@@ -760,13 +782,73 @@ function calcularRota(){
   if(!r){ r=dijkstra(G, PORT_NODE, NAV.dest.frente, {pe}); if(r) r.coords=r.path.map(n=>G.nodes.get(n)); }
   if(!r) return null;
   // a linha começa NA RUA — não liga mais a posição do GPS (dentro de casa) à rota
-  const ids=r.path, pts=r.coords;
+  const ids=r.path, pts0=r.coords;
+  const cum0=[0]; for(let i=1;i<pts0.length;i++) cum0.push(cum0[i-1]+metros(pts0[i-1],pts0[i]));
+  const mans=manobras(ids, pts0, cum0);            // manobras: calculadas no caminho do roteador
+  // desenho/bolinha/distâncias: rotatória vira curva suave (ver suavizarRotatorias)
+  const sv=suavizarRotatorias(ids, pts0), pts=sv.pts;
   const cum=[0]; for(let i=1;i<pts.length;i++) cum.push(cum[i-1]+metros(pts[i-1],pts[i]));
-  Object.assign(NAV,{ ids, pts, cum, total:cum[cum.length-1], lastS:0, origemGPS:deGPS, ditoFinal:false });
-  NAV.mans=manobras(ids, pts, cum);
+  const kn=[]; for(let i=0;i<ids.length;i++) if(sv.mapa[i]!=null) kn.push([cum0[i], cum[sv.mapa[i]]]);
+  const mapS=(s)=>{ for(let k=0;k+1<kn.length;k++) if(s<=kn[k+1][0]){ const [a0,b0]=kn[k],[a1,b1]=kn[k+1]; return b0+(b1-b0)*((s-a0)/((a1-a0)||1)); } return kn.length?kn[kn.length-1][1]:s; };
+  mans.forEach(m=>{ m.s=mapS(m.s); });
+  Object.assign(NAV,{ ids, pts, cum, total:cum[cum.length-1], lastS:0, origemGPS:deGPS, ditoFinal:false, mans });
   NAV.lado=ladoDestino();
   desenharRota();
   return r;
+}
+// DESENHO da passagem pela rotatória: o roteador usa um anel de 8+ nós (decide sentido e
+// manobra), mas desenhar esses nós dá um "octógono" torto com quinas de 90° nas ligações.
+// Aqui o trecho do anel (do nó antes de entrar ao nó depois de sair) vira uma Bézier
+// cúbica que contorna a ilha pelo lado anti-horário. Reto ≈ leve desvio; virar ≈ curva.
+const angDe=(C,P)=>{ const v=xy(P,C); return Math.atan2(v[1],v[0]); };          // 0 = leste, anti-horário +
+const polar=(C,r,a)=>[ C[0]+r*Math.sin(a)/(R*rad), C[1]+r*Math.cos(a)/(R*rad*Math.cos(C[0]*rad)) ];
+const offset=(P,m,a)=>[ P[0]+m*Math.sin(a)/(R*rad), P[1]+m*Math.cos(a)/(R*rad*Math.cos(P[0]*rad)) ];   // anda m metros na direção a
+const bez=(a,b,c,d,t)=>{ const u=1-t; return [0,1].map(k=>u*u*u*a[k]+3*u*u*t*b[k]+3*u*t*t*c[k]+t*t*t*d[k]); };
+function suavizarRotatorias(ids, pts){
+  const CL=G.cluster||new Map(), CC=G.clusterCenter||new Map(), CR=G.clusterRaio||new Map();
+  const out=[], mapa=[];                               // mapa[i] = índice em `out` do ponto original i
+  let i=0;
+  while(i<ids.length){
+    const c=CL.get(ids[i]);
+    if(c && isRT(c) && i>0){
+      let j=i; while(j<ids.length && CL.get(ids[j])===c) j++;
+      if(j<ids.length){                                // há saída: de pts[i-1] (rua de entrada) a pts[j] (rua de saída)
+        // como o Google Maps: entra na FAIXA da rotatória pela direita (curva tangente),
+        // contorna colado na ilha no sentido anti-horário e sai pela direita na rua de saída
+        const C=CC.get(c), P0=pts[i-1], P3=pts[j], Rc=(CR.get(c)||4)+3.5;   // raio da faixa de circulação
+        const a0=angDe(C,P0), a1=angDe(C,P3);
+        let d=a1-a0; while(d<=0.05) d+=2*Math.PI;            // do braço de entrada ao de saída, anti-horário
+        const dl=Math.min(0.3, d/4);                         // entra/sai ~17° à direita do eixo da rua
+        const ae=a0+dl, ax=a0+d-dl;
+        const E=polar(C,Rc,ae), X=polar(C,Rc,ax);
+        // entrada: da rua até a faixa (tangente ao círculo)
+        const k0=Math.max(Rc+1, Math.min(metros(C,P0), Rc+6));
+        const e1=polar(C,k0,a0), e2=offset(E,3,ae-Math.PI/2);
+        for(let k=1;k<=8;k++) out.push(bez(P0,e1,e2,E,k/8));
+        // contorno: arco anti-horário pela faixa
+        const passos=Math.max(2, Math.ceil((ax-ae)/(Math.PI/18)));
+        for(let k=1;k<passos;k++) out.push(polar(C,Rc,ae+(ax-ae)*k/passos));
+        // saída: da faixa até a rua de saída
+        const k3=Math.max(Rc+1, Math.min(metros(C,P3), Rc+6));
+        const x1=offset(X,3,ax+Math.PI/2), x2=polar(C,k3,a1);
+        for(let k=0;k<8;k++) out.push(bez(X,x1,x2,P3,k/8));
+        i=j; continue;
+      }
+    }
+    mapa[i]=out.length; out.push(pts[i]); i++;
+  }
+  // fim: se o caminho passa do ponto de chegada e VOLTA (ex.: lote logo na saída da
+  // rotatória), termina direto na frente do lote, sem o "vai e volta" de poucos metros
+  const n=out.length;
+  if(n>=3){
+    const v1=xy(out[n-2],out[n-3]), v2=xy(out[n-1],out[n-2]);
+    const cs=(v1[0]*v2[0]+v1[1]*v2[1])/((Math.hypot(v1[0],v1[1])||1)*(Math.hypot(v2[0],v2[1])||1));
+    if(cs<-0.86){
+      out.splice(n-2,1);
+      for(let k=0;k<mapa.length;k++){ if(mapa[k]===n-2) mapa[k]=undefined; else if(mapa[k]===n-1) mapa[k]=n-2; }
+    }
+  }
+  return { pts:out, mapa };
 }
 // o destino fica à direita ou à esquerda de quem chega?
 function ladoDestino(){
