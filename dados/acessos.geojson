@@ -1,5 +1,5 @@
-{"type":"FeatureCollection","name":"acessos","_nota":"só desenho (modo Mapa): pistas da portaria até a avenida (entrada ao norte da guarita, saída ao sul, separadas pelo canteiro) e o trecho da Av. Gov. Tarcísio Maia em frente ao condomínio; NÃO entram nas rotas. Traçado sobre o satélite Esri.","features":[
-{"type":"Feature","properties":{"tipo":"acesso","nome":"Avenida Atlântica"},"geometry":{"type":"LineString","coordinates":[[-37.389732,-5.177753],[-37.3896195,-5.1776604],[-37.3894743,-5.1776725],[-37.3893001,-5.1776821],[-37.3891695,-5.1776821]]}},
-{"type":"Feature","properties":{"tipo":"acesso","nome":"Avenida Atlântica"},"geometry":{"type":"LineString","coordinates":[[-37.389704,-5.177873],[-37.3896195,-5.177899],[-37.3894743,-5.177846],[-37.3892977,-5.1778364]]}},
+{"type":"FeatureCollection","name":"acessos","_nota":"só desenho (modo Mapa): pistas RETAS e paralelas (rumo do canteiro) da portaria até a avenida — entrada ao norte, saída ao sul — e o trecho da Av. Gov. Tarcísio Maia em frente ao condomínio; NÃO entram nas rotas.","features":[
+{"type":"Feature","properties":{"tipo":"acesso","nome":"Avenida Atlântica"},"geometry":{"type":"LineString","coordinates":[[-37.389732,-5.177753],[-37.3891948,-5.1777153]]}},
+{"type":"Feature","properties":{"tipo":"acesso","nome":"Avenida Atlântica"},"geometry":{"type":"LineString","coordinates":[[-37.389704,-5.177873],[-37.3893028,-5.1778448]]}},
 {"type":"Feature","properties":{"tipo":"avenida","nome":"Avenida Governador Tarcísio Maia"},"geometry":{"type":"LineString","coordinates":[[-37.3906036,-5.1794048],[-37.3882985,-5.1766404]]}}
 ]}
