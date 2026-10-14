@@ -439,10 +439,15 @@ FUNDOS[FUNDO].addTo(map);
 const RUAS_LY=[], ROT_LY=[];      // traços das ruas e círculos das rotatórias (mudam de estilo com o fundo)
 // no satélite a foto já mostra a rua → traço fino; no mapa as ruas internas podem não
 // existir no mapa base → desenha as nossas como rua de verdade (cinza com borda)
+// No mapa a rua tem a LARGURA REAL (metros → pixels do zoom atual, como no Google Maps):
+// internas 8 m, pistas da portaria 9 m, avenida 14 m; de longe, um mínimo pra continuar visível.
 // (a avenida só aparece no mapa — no satélite a foto já mostra)
-const estiloRua=(tipo)=> FUNDO==='mapa' ? {color:'#ffffff',weight:tipo==='avenida'?13:7,opacity:1}
+const LARGURA={ interna:[8,5], acesso:[9,6], avenida:[14,8] };   // [metros, px mínimo]
+const pxDe=(m)=> m / (40075016.686*Math.cos(-5.177*Math.PI/180) / Math.pow(2, map.getZoom()+8));
+const larguraRua=(tipo)=>{ const [m,min]=LARGURA[tipo]||LARGURA.interna; return Math.max(min, pxDe(m)); };
+const estiloRua=(tipo)=> FUNDO==='mapa' ? {color:'#ffffff',weight:larguraRua(tipo),opacity:1}
                        : (tipo==='avenida' ? {opacity:0} : {color:'#ffffff',weight:2,opacity:.35});
-const estiloBorda=(tipo)=> FUNDO==='mapa' ? {color:'#c3ccd6',weight:tipo==='avenida'?17:10,opacity:1} : {opacity:0};
+const estiloBorda=(tipo)=> FUNDO==='mapa' ? {color:'#c3ccd6',weight:larguraRua(tipo)+3,opacity:1} : {opacity:0};
 const estiloRot=()=> FUNDO==='mapa' ? {color:'#94a3b8',weight:2,opacity:1,fillColor:'#cbd5e1',fillOpacity:.6} : {color:'#ffffff',weight:2,opacity:.8,fillColor:'#ffffff',fillOpacity:.15};
 function setFundo(f){
   if(!FUNDOS[f]) return;
@@ -490,6 +495,8 @@ function desenharBase(data){
     const linha=L.polyline(line.path||line, Object.assign({renderer:canvasRuas, pane:'ruas', interactive:false, lineCap:'round'}, estiloRua(line.tipo))).addTo(map);
     RUAS_LY.push({borda:bordas[i], linha, tipo:line.tipo});
   });
+  // largura real: refaz a espessura a cada zoom (só no mapa; no satélite é traço fino fixo)
+  map.on('zoomend', ()=>{ if(FUNDO==='mapa') for(const r of RUAS_LY){ r.borda.setStyle(estiloBorda(r.tipo)); r.linha.setStyle(estiloRua(r.tipo)); } });
   criarRotulos(data);
   aplicarFundoExtras();
   // lotes: não são desenhados (poluíam o mapa); só definem o enquadramento
@@ -1302,7 +1309,7 @@ const ORDEM_POI=['Clube','Saída','Administração','Smart Bodega'];
     if(ar.ok) data.extras=((await ar.json()).features||[]).filter(f=>f.geometry && f.geometry.type==='LineString').map(f=>{
       const pr=f.properties||{};
       return { path:f.geometry.coordinates.map(c=>[c[1],c[0]]), tipo:pr.tipo==='avenida'?'avenida':'acesso',
-               rotulo: pr.tipo==='avenida' && typeof pr.nome==='string' ? pr.nome : null }; });
+               rotulo: typeof pr.nome==='string' ? pr.nome : null }; });
   }catch(e){}
 
   ALL_BOUNDS = desenharBase(data);
