@@ -1000,7 +1000,7 @@ function atualizarNav(){
     GPS.offCount = (pr.d>lim && GPS.acc<=50 && !saindoDeCasa) ? GPS.offCount+1 : 0;
     if(GPS.offCount>=M.leituras && Date.now()-GPS.lastRecalc>M.intervalo){
       GPS.lastRecalc=Date.now(); GPS.offCount=0;
-      if(calcularRota()){ toast('Rota recalculada'); falar('Rota recalculada.', true); return atualizarNav(); }
+      if(calcularRota()){ toast('Rota recalculada'); falar(['Rota recalculada.'], true); return atualizarNav(); }
     }
     // chegou?
     if(NAV.total-s<15 || metros(GPS.ll, NAV.pts[NAV.pts.length-1])<18) return chegou();
@@ -1025,6 +1025,7 @@ function atualizarNav(){
 
 // rota até um lote OU ponto nomeado. Termina na RUA em frente ao destino ('p_<id>').
 function rotaPara(destNode, destLatLng, nome){
+  liberarAudio();                 // estamos dentro do toque → libera o áudio no iPhone
   $('err').textContent='';
   const frente=G.nodes.has('p_'+destNode) ? 'p_'+destNode : destNode;
   NAV.dest={ node:destNode, frente, ll:destLatLng, nome };
@@ -1045,10 +1046,10 @@ function chegou(){
   routeLine=routeBg=routeDone=null;
   $('arrTxt').textContent=`${NAV.dest.nome} fica à sua ${NAV.lado||'frente'}.`;
   estado('stArr'); soltarTela(); confete();
-  falar(`Você chegou. ${maiusc(comArtigo(NAV.dest.nome))} fica à sua ${NAV.lado||'frente'}.`, true);
+  falar(FRASE.chegou(NAV.dest.nome, NAV.lado), true);
 }
 function encerrar(){
-  if('speechSynthesis' in window) speechSynthesis.cancel();
+  pararVoz();
   NAV.dest=null; NAV.pts=null; GPS.arrived=false; GPS.vis=null;
   if(GPS.ll) desenharEu();
   [routeLine,routeBg,routeDone,destMarker].forEach(l=>l&&map.removeLayer(l));
@@ -1104,55 +1105,116 @@ function desenharEu(){
 }
 
 /* ---------------- voz das instruções ----------------
-   Sintetizador do próprio aparelho (pt-BR, funciona sem internet). Avisa ~150 m antes
-   da manobra ("Em 150 metros, vire à direita") e de novo na hora ("Vire à direita").
-   No iPhone a voz só é liberada depois de um toque — por isso a 1ª fala sai no próprio
-   toque que traça a rota (vozInicio). */
-const VOZ={ ligada:true, voz:null };
+   Cada frase é uma lista de PEDAÇOS (ex.: ["Em 150 metros,", "vire à direita na Rua X."]).
+   1º) Se todos os pedaços existem GRAVADOS (voz/indice.json → voz/*.mp3, gerados uma vez
+       com voz neural — ferramentas/gerar_voz.py), toca as gravações emendadas pelo Web
+       Audio. Mesma voz natural em qualquer celular; funciona sem sinal (cache do app).
+   2º) Senão, a voz do próprio celular lê a frase inteira (melhor voz pt-BR disponível).
+   Avisa ~150 m antes da manobra e de novo na hora. No iPhone o áudio só é liberado depois
+   de um toque — por isso liberarAudio()/vozInicio() rodam no toque que traça a rota. */
+const VOZ={ ligada:true, voz:null, clips:null, ctx:null, buf:new Map(), fontes:[], fim:0 };
 try{ VOZ.ligada = localStorage.getItem('copa.voz')!=='0'; }catch(e){}
+// melhor voz do celular: pt-BR > aprimorada/premium/neural > Google/rede
 function escolherVoz(){
-  const vs=speechSynthesis.getVoices();
-  VOZ.voz = vs.find(v=>/pt[-_]BR/i.test(v.lang) && /Luciana|Francisca|Google/i.test(v.name))
-         || vs.find(v=>/pt[-_]BR/i.test(v.lang)) || vs.find(v=>/^pt/i.test(v.lang)) || null;
+  const nota=(v)=> (/pt[-_]BR/i.test(v.lang)?100:0) + (/premium|enhanced|aprimorad|neural|natural/i.test(v.name)?50:0)
+                 + (/google/i.test(v.name)?30:0) + (v.localService===false?10:0) + (/luciana|francisca|thalita/i.test(v.name)?5:0);
+  VOZ.voz = speechSynthesis.getVoices().filter(v=>/^pt/i.test(v.lang)).sort((a,b)=>nota(b)-nota(a))[0] || null;
 }
 if('speechSynthesis' in window){ escolherVoz(); speechSynthesis.onvoiceschanged=escolherVoz; }
-function falar(txt, urgente){
-  (window._falas ||= []).push(txt);                  // registro (testes/depuração)
-  if(!VOZ.ligada || !('speechSynthesis' in window)) return;
-  if(urgente) speechSynthesis.cancel();
+fetch('voz/indice.json',{cache:'no-store'}).then(r=>r.ok?r.json():null).then(j=>{ VOZ.clips=(j&&j.clips)||null; }).catch(()=>{});
+const chaveVoz=(t)=> t.toLowerCase().replace(/[.,:;!?]+$/,'').replace(/\s+/g,' ').trim();
+// chamado DENTRO de um toque: libera Web Audio e a voz do celular no iPhone
+function liberarAudio(){
+  try{ VOZ.ctx ||= new (window.AudioContext||window.webkitAudioContext)(); if(VOZ.ctx.state==='suspended') VOZ.ctx.resume(); }catch(e){}
+  try{ if('speechSynthesis' in window && !VOZ.synthOk){ const u=new SpeechSynthesisUtterance(' '); u.volume=0; speechSynthesis.speak(u); VOZ.synthOk=true; } }catch(e){}
+}
+function bufferDe(arq){
+  if(VOZ.buf.has(arq)) return VOZ.buf.get(arq);
+  const p=fetch('voz/'+arq).then(r=>{ if(!r.ok) throw new Error(r.status); return r.arrayBuffer(); })
+    .then(a=>new Promise((ok,er)=>VOZ.ctx.decodeAudioData(a,ok,er)));
+  VOZ.buf.set(arq,p); p.catch(()=>VOZ.buf.delete(arq));
+  return p;
+}
+// baixa de antemão os pedaços das frases desta rota (a fala sai sem atraso)
+function preCarregar(frases){
+  if(!VOZ.clips || !VOZ.ctx) return;
+  for(const partes of frases) for(const t of partes){ const a=VOZ.clips[chaveVoz(t)]; if(a) bufferDe(a).catch(()=>{}); }
+}
+function pararVoz(){
+  try{ speechSynthesis.cancel(); }catch(e){}
+  for(const s of VOZ.fontes){ try{ s.stop(); }catch(e){} }
+  VOZ.fontes=[]; VOZ.fim=0;
+}
+function falarCelular(txt){
+  if(!('speechSynthesis' in window)) return;
   const u=new SpeechSynthesisUtterance(txt);
   u.lang='pt-BR'; if(VOZ.voz) u.voice=VOZ.voz; u.rate=1.02;
   speechSynthesis.speak(u);
 }
-const distFalada=(m)=> m>=1000 ? `${(m/1000).toFixed(1).replace('.',',')} quilômetros`
+async function falar(partes, urgente){
+  if(typeof partes==='string') partes=[partes];
+  const txt=partes.join(' ');
+  (window._falas ||= []).push(txt);                  // registro (testes/depuração)
+  if(!VOZ.ligada) return;
+  if(urgente) pararVoz();
+  const arqs=VOZ.clips && VOZ.ctx ? partes.map(t=>VOZ.clips[chaveVoz(t)]) : null;
+  if(!arqs || arqs.some(a=>!a)){ (window._falasCelular ||= []).push(txt); return falarCelular(txt); }
+  try{
+    // espera as gravações no máximo 1,5 s (sem sinal e sem cache → voz do celular)
+    const bufs=await Promise.race([ Promise.all(arqs.map(bufferDe)), new Promise((_,er)=>setTimeout(()=>er(new Error('demorou')),1500)) ]);
+    if(VOZ.ctx.state==='suspended') await VOZ.ctx.resume();
+    let t=Math.max(VOZ.ctx.currentTime+0.03, VOZ.fim + (VOZ.fim ? 0.35 : 0));
+    bufs.forEach((b,i)=>{
+      const s=VOZ.ctx.createBufferSource(); s.buffer=b; s.connect(VOZ.ctx.destination); s.start(t);
+      VOZ.fontes.push(s); s.onended=()=>{ VOZ.fontes=VOZ.fontes.filter(x=>x!==s); };
+      t+=b.duration + (/[.:]$/.test(partes[i]) ? 0.22 : /,$/.test(partes[i]) ? 0.12 : 0.04);   // pausa natural
+    });
+    VOZ.fim=t;
+    (window._falasGravadas ||= []).push(txt);
+  }catch(e){ (window._falasCelular ||= []).push(txt); falarCelular(txt); }
+}
+const distFalada=(m)=> m>=950 ? (Math.round(m/100)/10===1 ? '1 quilômetro' : `${(Math.round(m/100)/10).toFixed(1).replace('.',',')} quilômetros`)
                      : `${m>100 ? Math.round(m/50)*50 : Math.max(10, Math.round(m/10)*10)} metros`;
 const minusc=(t)=> t.charAt(0).toLowerCase()+t.slice(1);
 const maiusc=(t)=> t.charAt(0).toUpperCase()+t.slice(1);
 // "o lote 367", "o Clube", "a Saída", "a Administração"
 const comArtigo=(nome)=> /^Lote /.test(nome) ? 'o '+minusc(nome) : (/(a|ção|ída)$/i.test(nome) ? 'a ' : 'o ')+nome;
+// "ao lote 367", "ao Clube", "à Saída"
+const aoDestino=(nome)=>{ const a=comArtigo(nome); return a.startsWith('a ') ? 'à '+a.slice(2) : 'a'+a; };
+// ---- frases (em pedaços; os MESMOS textos que ferramentas/gerar_voz.py grava) ----
+const FRASE={
+  inicio:(nome,total)=>[`Rota para ${comArtigo(nome)}.`, `São ${distFalada(total)}.`],
+  emDist:(d)=>`Em ${distFalada(d)},`,
+  manobra:(m)=>`${maiusc(textoManobra(m))}.`,
+  sigaPor:(rua,d)=>[rua ? `Siga pela ${rua}` : 'Siga em frente', `por ${distFalada(d)}.`],
+  final:(d,lado)=>[`Em ${distFalada(d)},`, `o destino fica à sua ${lado||'frente'}.`],
+  chegou:(nome,lado)=>[`Você chegou ${aoDestino(nome)}.`, `Fica à sua ${lado||'frente'}.`],
+};
 function vozInicio(){
-  const min=minutos(NAV.total), prox=NAV.mans[0];
-  let t=`Rota para ${comArtigo(NAV.dest.nome)}: ${distFalada(NAV.total)}, cerca de ${min} ${min>1?'minutos':'minuto'}.`;
-  if(prox && prox.s<=200){ t+=` Em ${distFalada(prox.s)}, ${minusc(textoManobra(prox))}.`; prox.ditoLonge=true; }
-  else if(prox){ const r0=ruaApos(NAV.ids, 0); t+=` Siga ${r0 ? 'pela '+r0 : 'em frente'} por ${distFalada(prox.s)}.`; }
-  falar(t, true);
+  const prox=NAV.mans[0];
+  let partes=FRASE.inicio(NAV.dest.nome, NAV.total);
+  if(prox && prox.s<=200){ partes=partes.concat([FRASE.emDist(prox.s), FRASE.manobra(prox)]); prox.ditoLonge=true; }
+  else if(prox) partes=partes.concat(FRASE.sigaPor(ruaApos(NAV.ids,0), prox.s));
+  falar(partes, true);
+  // já deixa baixando as falas desta rota
+  preCarregar(NAV.mans.map(m=>[FRASE.manobra(m)]).concat([[`Você chegou ${aoDestino(NAV.dest.nome)}.`]]));
 }
 // a cada leitura do GPS: aviso antecipado (60–200 m) e aviso na hora (≤40 m), uma vez cada
 function vozNav(s, falta){
   const prox=NAV.mans.find(m=>m.s>s+3);
   if(prox){
     const d=prox.s-s;
-    if(d<=40 && !prox.ditoPerto){ prox.ditoPerto=prox.ditoLonge=true; falar(textoManobra(prox), true); }
-    else if(d<=200 && d>60 && !prox.ditoLonge){ prox.ditoLonge=true; falar(`Em ${distFalada(d)}, ${minusc(textoManobra(prox))}.`); }
+    if(d<=40 && !prox.ditoPerto){ prox.ditoPerto=prox.ditoLonge=true; falar([FRASE.manobra(prox)], true); }
+    else if(d<=200 && d>60 && !prox.ditoLonge){ prox.ditoLonge=true; falar([FRASE.emDist(d), FRASE.manobra(prox)]); }
   } else if(falta<=70 && !NAV.ditoFinal){
-    NAV.ditoFinal=true; falar(`Em ${distFalada(falta)}, ${comArtigo(NAV.dest.nome)} fica à sua ${NAV.lado||'frente'}.`);
+    NAV.ditoFinal=true; falar(FRASE.final(falta, NAV.lado));
   }
 }
 const ICON_SOM_ON='<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#0f172a" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M4 9v6h4l5 4V5L8 9z"/><path d="M16.5 8.5a5 5 0 0 1 0 7M19 6a8.5 8.5 0 0 1 0 12"/></svg>';
 const ICON_SOM_OFF='<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#94a3b8" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M4 9v6h4l5 4V5L8 9z"/><path d="M17 9l5 6M22 9l-5 6"/></svg>';
 function setSom(on){
   VOZ.ligada=on; try{ localStorage.setItem('copa.voz', on?'1':'0'); }catch(e){}
-  if(!on && 'speechSynthesis' in window) speechSynthesis.cancel();
+  if(!on) pararVoz();
   const b=$('som'); b.innerHTML=on?ICON_SOM_ON:ICON_SOM_OFF;
   b.setAttribute('aria-pressed', on); b.setAttribute('aria-label', on?'Voz ligada':'Voz desligada');
 }
@@ -1323,7 +1385,7 @@ const ORDEM_POI=['Clube','Saída','Administração','Smart Bodega'];
   setModo(MODO);
   document.querySelectorAll('#modos .modo').forEach(b=> b.onclick=()=>setModo(b.dataset.modo));
   setSom(VOZ.ligada);
-  $('som').onclick=()=>{ setSom(!VOZ.ligada); if(VOZ.ligada) falar('Voz ligada.', true); };
+  $('som').onclick=()=>{ liberarAudio(); setSom(!VOZ.ligada); if(VOZ.ligada) falar(['Voz ligada.'], true); };
   $('again').onclick=encerrar;
   $('recenter').onclick=()=>{ GPS.follow=true; $('recenter').hidden=true; posFab(); if(GPS.ll) centrarEm(GPS.vis||GPS.ll, Math.max(map.getZoom(),18)); };
   map.on('dragstart',()=>{ if(NAV.dest && !GPS.arrived){ GPS.follow=false; $('recenter').hidden=false; posFab(); } });
@@ -1336,6 +1398,27 @@ const ORDEM_POI=['Clube','Saída','Administração','Smart Bodega'];
 
   // expõe p/ depuração no console (e p/ simular o GPS nos testes)
   Object.assign(window,{ G, LOTS_BY_ID, PORT_NODE, dijkstra, rotaPara, NAV, GPS, onFix, setModo, modo });
+  // TODOS os pedaços de frase que a voz pode falar (lista usada por ferramentas/gerar_voz.py
+  // pra gravar a voz neural — mesma fonte de texto do app, então nada fica de fora)
+  window.inventarioVoz=()=>{
+    const S=new Set(), add=(a)=>a.forEach(t=>S.add(t));
+    const ruas=[...new Set(Object.values(NOME_ST))].concat([null]);
+    const dists=new Set(); for(let m=0;m<=1600;m++) dists.add(distFalada(m));
+    for(const n of [...LOTS_BY_ID.keys()].map(id=>'Lote '+id).concat(ORDEM_POI)){
+      add(FRASE.inicio(n,100).slice(0,1)); add(FRASE.chegou(n,'direita').slice(0,1));
+    }
+    for(const l of ['direita','esquerda','frente']){ add(FRASE.chegou('Clube',l).slice(1)); add(FRASE.final(100,l).slice(1)); }
+    for(const dt of dists){ S.add(`São ${dt}.`); S.add(`Em ${dt},`); S.add(`por ${dt}.`); }
+    for(const r of ruas){
+      S.add(r ? `Siga pela ${r}` : 'Siga em frente');
+      for(const t of ['esq','dir','leve-esq','leve-dir']) S.add(FRASE.manobra({rot:false,tipo:t,rua:r}));
+      for(let k=1;k<ORDINAL.length;k++) S.add(FRASE.manobra({rot:true,saida:k,rua:r,ang:0}));
+      for(const a of [0,90,-90,180]) S.add(FRASE.manobra({rot:true,saida:0,rua:r,ang:a}));
+    }
+    S.add(FRASE.manobra({rot:false,tipo:'retorno',rua:null}));
+    add(['Rota recalculada.','Voz ligada.']);
+    return [...S];
+  };
   window.simularGPS=(pontos, ms=700, acc=6)=>{ clearInterval(window._sim); let i=0;
     window._sim=setInterval(()=>{ if(i>=pontos.length) return clearInterval(window._sim);
       const p=pontos[i++]; onFix({coords:{latitude:p[0],longitude:p[1],accuracy:acc,heading:null,speed:null}}); }, ms); };

@@ -8,6 +8,7 @@
 !/sw.js
 !/icons/
 !/dados/
+!/voz/
 
 /dados/*
 !/dados/ruas.geojson
